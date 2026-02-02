@@ -1,0 +1,42 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# 日志文件
+*.log
+logs/
+
+# 敏感信息
+cookies.txt
+.env
+config.ini.local
+
+# 音频缓存
+cache/
+*.mp3
+*.wav
+
+# IDE配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试覆盖率
+.coverage
+htmlcov/
+.pytest_cache/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+nul

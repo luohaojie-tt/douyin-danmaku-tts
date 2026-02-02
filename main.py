@@ -24,7 +24,9 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from src.config.loader import load_config
 from src.douyin.cookie import CookieManager
 from src.douyin.connector import DouyinConnector, DouyinConnectorMock
+from src.douyin.connector_real import DouyinConnectorReal
 from src.douyin.parser import MessageParser
+from src.douyin.parser_real import RealtimeMessageParser
 from src.tts.edge_tts import EdgeTTSEngine
 from src.player.pygame_player import PygamePlayer
 
@@ -42,7 +44,8 @@ class DanmakuOrchestrator:
         self,
         room_id: str,
         config_path: str = "config.ini",
-        use_mock: bool = False
+        use_mock: bool = False,
+        use_real: bool = False
     ):
         """
         初始化编排器
@@ -51,10 +54,12 @@ class DanmakuOrchestrator:
             room_id: 直播间房间ID
             config_path: 配置文件路径
             use_mock: 是否使用Mock连接器
+            use_real: 是否使用真实连接器（Playwright）
         """
         self.room_id = room_id
         self.config_path = config_path
         self.use_mock = use_mock
+        self.use_real = use_real
 
         # 统计信息
         self.stats = {
@@ -120,23 +125,31 @@ class DanmakuOrchestrator:
         if self.use_mock:
             logger.info("使用Mock连接器（测试模式）")
             self.connector = DouyinConnectorMock(self.room_id, self.ttwid)
+            self.parser = MessageParser()
+        elif self.use_real:
+            logger.info("使用真实连接器（Playwright）")
+            logger.info("  提示: 需要Chrome在调试模式下运行")
+            logger.info("  启动命令: chrome.exe --remote-debugging-port=9222")
+            self.connector = DouyinConnectorReal(self.room_id, self.ttwid)
+            self.parser = RealtimeMessageParser()
         else:
-            logger.info("初始化WebSocket连接器...")
+            logger.info("使用标准WebSocket连接器...")
             self.connector = DouyinConnector(self.room_id, self.ttwid)
+            self.parser = MessageParser()
 
         logger.info("="*60)
         logger.info("初始化完成")
         logger.info("="*60)
         return True
 
-    async def handle_message(self, raw_message: dict):
+    async def handle_message(self, raw_message):
         """
         处理接收到的消息
 
         流程: 解析 → TTS → 播放
 
         Args:
-            raw_message: 原始消息字典
+            raw_message: 原始消息（字典或二进制）
         """
         try:
             self.stats["messages_received"] += 1
@@ -145,9 +158,15 @@ class DanmakuOrchestrator:
             if isinstance(raw_message, dict):
                 # Mock连接器返回的是字典格式
                 parsed = self.parser.parse_test_message(raw_message)
-            else:
+            elif isinstance(raw_message, bytes):
                 # 真实连接器返回的是二进制数据
-                parsed = await self.parser.parse_message(raw_message)
+                if self.use_real:
+                    parsed = self.parser.parse_message(raw_message)
+                else:
+                    parsed = await self.parser.parse_message(raw_message)
+            else:
+                logger.warning(f"未知消息类型: {type(raw_message)}")
+                return
 
             if not parsed:
                 logger.debug("消息解析失败，跳过")
@@ -204,9 +223,16 @@ class DanmakuOrchestrator:
 
             if not connected:
                 logger.error("连接直播间失败")
-                if not self.use_mock:
-                    logger.info("提示：WebSocket连接存在问题，可以使用 --mock 参数测试")
-                    logger.info("示例: python main.py <room_id> --mock")
+                if self.use_mock:
+                    logger.info("提示：Mock模式已启用")
+                elif self.use_real:
+                    logger.info("提示：真实连接失败，请检查:")
+                    logger.info("  1. Chrome是否在调试模式下运行？")
+                    logger.info("  2. 启动命令: chrome.exe --remote-debugging-port=9222")
+                else:
+                    logger.info("提示：可以使用 --mock 或 --real 参数")
+                    logger.info("  --mock: Mock模式（不需要Chrome）")
+                    logger.info("  --real: 真实模式（需要Chrome调试模式）")
                 return False
 
             self.is_running = True
@@ -266,9 +292,14 @@ def parse_arguments():
         epilog="""
 示例:
   python main.py 728804746624
-  python main.py 728804746624 --mock
+  python main.py 728804746624 --mock      # 使用Mock模式
+  python main.py 728804746624 --real       # 使用真实连接（需要Chrome调试模式）
   python main.py 728804746624 --debug
   python main.py 728804746624 --config custom.ini
+
+注意：
+  --real 模式需要Chrome在调试模式下运行:
+  启动命令: chrome.exe --remote-debugging-port=9222
         """
     )
 
@@ -281,6 +312,12 @@ def parse_arguments():
         "--mock",
         action="store_true",
         help="使用Mock连接器（不连接真实直播间）"
+    )
+
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="使用真实连接器（需要Chrome调试模式）"
     )
 
     parser.add_argument(
@@ -351,7 +388,8 @@ async def main_async():
     orchestrator = DanmakuOrchestrator(
         room_id=args.room_id,
         config_path=args.config,
-        use_mock=args.mock
+        use_mock=args.mock,
+        use_real=args.real
     )
 
     # 初始化

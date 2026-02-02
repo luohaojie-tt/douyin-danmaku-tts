@@ -261,16 +261,28 @@ class DouyinConnectorMock(DouyinConnector):
         super().__init__(room_id, ttwid)
         self.mock_messages = [
             {
-                "type": "chat",
-                "user": {"nickname": "测试用户1", "id": "123456"},
-                "content": "主播好！",
-                "timestamp": 1234567890,
+                "method": "WebChatMessage",
+                "payload": {
+                    "user": {
+                        "nickname": "测试用户1",
+                        "id": "123456",
+                        "level": 10
+                    },
+                    "content": "主播好！",
+                    "timestamp": 1234567890,
+                }
             },
             {
-                "type": "chat",
-                "user": {"nickname": "测试用户2", "id": "789012"},
-                "content": "支持主播！",
-                "timestamp": 1234567891,
+                "method": "WebChatMessage",
+                "payload": {
+                    "user": {
+                        "nickname": "测试用户2",
+                        "id": "789012",
+                        "level": 20
+                    },
+                    "content": "支持主播！",
+                    "timestamp": 1234567891,
+                }
             },
         ]
 

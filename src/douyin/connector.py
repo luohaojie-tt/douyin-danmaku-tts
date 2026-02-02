@@ -27,12 +27,12 @@ class DouyinConnector:
     基于已验证的协议实现
     """
 
-    # 已验证的WebSocket服务器列表
+    # 已验证的WebSocket服务器列表（2025年2月）
     WS_SERVERS = [
-        "wss://webcast5-ws-web-lf.amemv.com/webcast/im/push/v2/",
-        "wss://webcast5-ws-web-hl.amemv.com/webcast/im/push/v2/",
-        "wss://webcast3-ws-web-lf.amemv.com/webcast/im/push/v2/",
-        "wss://webcast62-ws-web-lf.amemv.com/webcast/im/push/v2/",
+        "wss://webcast5-ws-web-lf.douyin.com/webcast/im/push/v2/",
+        "wss://webcast5-ws-web-hl.douyin.com/webcast/im/push/v2/",
+        "wss://webcast3-ws-web-lf.douyin.com/webcast/im/push/v2/",
+        "wss://webcast.amemv.com/webcast/im/push/v2/",
     ]
 
     # User-Agent
@@ -69,7 +69,9 @@ class DouyinConnector:
         # 尝试多个服务器
         for ws_url in self.WS_SERVERS:
             try:
-                logger.info(f"尝试连接: {ws_url}")
+                # 在URL中添加房间ID参数
+                full_url = f"{ws_url}?room_id={self.room_id}"
+                logger.info(f"尝试连接: {full_url}")
 
                 headers = {
                     "Cookie": f"ttwid={self.ttwid}",
@@ -78,14 +80,14 @@ class DouyinConnector:
                 }
 
                 self.ws = await websockets.connect(
-                    ws_url,
+                    full_url,
                     additional_headers=headers,
                     ping_interval=None,
                     close_timeout=10,
                 )
 
                 self.is_connected = True
-                logger.info(f"WebSocket连接成功: {ws_url}")
+                logger.info(f"WebSocket连接成功: {full_url}")
 
                 # 启动心跳
                 self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())

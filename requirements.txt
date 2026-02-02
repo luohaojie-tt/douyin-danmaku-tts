@@ -1,0 +1,17 @@
+# 抖音弹幕语音播报工具 - Python依赖包
+
+# 核心依赖
+websockets==12.0
+protobuf==4.25.1
+edge-tts==6.1.9
+pygame==2.5.2
+
+# 辅助依赖
+aiohttp==3.9.1
+
+# 配置管理
+configparser==6.0.0
+python-dotenv==1.0.0
+
+# 日志
+colorlog==6.8.0

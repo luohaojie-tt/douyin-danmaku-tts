@@ -1,42 +1,85 @@
-# Python 缓存
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# 虚拟环境
-.venv/
+# Virtual Environment
 venv/
 ENV/
 env/
 
-# 日志文件
-*.log
-logs/
-
-# 敏感信息
-cookies.txt
-.env
-config.ini.local
-
-# 音频缓存
-cache/
-*.mp3
-*.wav
-
-# IDE配置
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# 测试覆盖率
+# Testing
+.pytest_cache/
 .coverage
 htmlcov/
-.pytest_cache/
+.tox/
 
-# 系统文件
-.DS_Store
-Thumbs.db
-nul
+# Temporary files
+*.log
+*.tmp
+*.temp
+message_*.txt
+chat_danmaku.txt
+real_danmaku.txt
+chinese_strings.txt
+danmaku_candidates.txt
+websocket_url.txt
+valid_websocket_urls.txt
+
+# Debug outputs
+debug_*.py
+debug_*.html
+debug_*.png
+*_screenshot.png
+*_extraction.png
+signature_extraction.png
+websocket_captured.png
+live_status_check.png
+
+# Playwright
+playwright-report/
+playwright/.cache/
+
+# Chrome
+chrome_debug_profile/
+C:/chrome_debug_profile/
+
+# Claude
+.claude/
+
+# Node modules (for signature.js)
+node_modules/
+
+# Output files
+*.wav
+*.mp3
+*.ogg
+audio_cache/
+
+# Test outputs
+test_output/
+temp/

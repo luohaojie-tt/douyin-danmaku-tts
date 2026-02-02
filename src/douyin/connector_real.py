@@ -183,34 +183,46 @@ class DouyinConnectorReal:
             # 等待页面完全渲染和JavaScript执行完成
             # 这是关键！页面需要时间来加载所有数据
             logger.info("  等待页面完全渲染...")
-            await asyncio.sleep(5)  # 增加到5秒，确保JavaScript完全执行
+            await asyncio.sleep(15)  # 增加到15秒，与deep_explore保持一致
 
-            # 从浏览器中获取roomId和uniqueId
+            # 从浏览器中获取roomId和uniqueId（带重试机制）
             logger.info("  获取房间信息...")
-            room_info = await self.page.evaluate('''() => {
-                // Extract from __pace_f element 24 (25th element, index 24)
-                if (window.self && window.self.__pace_f && window.self.__pace_f.length > 24) {
-                    try {
-                        const item = window.self.__pace_f[24];
-                        if (item && item[1] && typeof item[1] === 'string') {
-                            // Parse JSON data
-                            const data = JSON.parse(item[1]);
+            room_info = None
+            for attempt in range(3):  # 最多尝试3次
+                room_info = await self.page.evaluate('''() => {
+                    // Extract from __pace_f element 24 using regex
+                    if (window.self && window.self.__pace_f && window.self.__pace_f.length > 24) {
+                        try {
+                            const item = window.self.__pace_f[24];
+                            if (item && item[1] && typeof item[1] === 'string') {
+                                const content = item[1];
 
-                            if (data.state && data.state.appStore) {
-                                return {
-                                    found: true,
-                                    roomId: data.state.appStore.roomId,
-                                    uniqueId: data.state.userStore?.odin?.user_unique_id
-                                };
+                                // Use regex to extract roomId (avoid JSON parse issues)
+                                const roomMatch = content.match(/"roomId":"([0-9]+)"/);
+                                const uniqueMatch = content.match(/"user_unique_id":"([0-9]+)"/);
+
+                                if (roomMatch || uniqueMatch) {
+                                    return {
+                                        found: true,
+                                        roomId: roomMatch ? roomMatch[1] : null,
+                                        uniqueId: uniqueMatch ? uniqueMatch[1] : null
+                                    };
+                                }
                             }
+                        } catch (e) {
+                            console.error("Failed to extract from __pace_f[24]:", e);
                         }
-                    } catch (e) {
-                        console.error("Failed to parse __pace_f[24]:", e);
                     }
-                }
 
-                return {found: false};
-            }''')
+                    return {found: false, pace_length: window.self?.__pace_f?.length || 0};
+                }''')
+
+                if room_info and room_info.get('found'):
+                    break
+
+                if attempt < 2:  # 不是最后一次尝试
+                    logger.info(f"  第{attempt + 1}次尝试失败，__pace_f长度: {room_info.get('pace_length', 0)}，等待5秒后重试...")
+                    await asyncio.sleep(5)
 
             if room_info and room_info.get('found'):
                 self.real_room_id = room_info['roomId']

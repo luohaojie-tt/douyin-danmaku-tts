@@ -5,8 +5,10 @@
 """
 
 from src.douyin.cookie import CookieManager, default_cookie_manager
+from src.douyin.connector import DouyinConnector
 
 __all__ = [
     'CookieManager',
     'default_cookie_manager',
+    'DouyinConnector',
 ]

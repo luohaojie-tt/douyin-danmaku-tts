@@ -56,8 +56,16 @@ class DouyinConnectorReal:
         # 签名
         self.signature = None
 
+        # 真实的roomId和uniqueId（从页面获取）
+        self.real_room_id = None
+        self.unique_id = None
+
         # 完整的WebSocket URL（从浏览器捕获）
         self.captured_ws_url = None
+
+        # IM初始化参数（独立获取）
+        self.im_cursor = None
+        self.im_internal_ext = None
 
         # 心跳相关
         self.heartbeat_task = None
@@ -172,6 +180,48 @@ class DouyinConnectorReal:
             await self.page.goto(url, wait_until='domcontentloaded', timeout=30000)
             logger.info("  [OK] 页面加载完成")
 
+            # 等待页面完全渲染和JavaScript执行完成
+            # 这是关键！页面需要时间来加载所有数据
+            logger.info("  等待页面完全渲染...")
+            await asyncio.sleep(5)  # 增加到5秒，确保JavaScript完全执行
+
+            # 从浏览器中获取roomId和uniqueId
+            logger.info("  获取房间信息...")
+            room_info = await self.page.evaluate('''() => {
+                // Extract from __pace_f element 24 (25th element, index 24)
+                if (window.self && window.self.__pace_f && window.self.__pace_f.length > 24) {
+                    try {
+                        const item = window.self.__pace_f[24];
+                        if (item && item[1] && typeof item[1] === 'string') {
+                            // Parse JSON data
+                            const data = JSON.parse(item[1]);
+
+                            if (data.state && data.state.appStore) {
+                                return {
+                                    found: true,
+                                    roomId: data.state.appStore.roomId,
+                                    uniqueId: data.state.userStore?.odin?.user_unique_id
+                                };
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse __pace_f[24]:", e);
+                    }
+                }
+
+                return {found: false};
+            }''')
+
+            if room_info and room_info.get('found'):
+                self.real_room_id = room_info['roomId']
+                self.unique_id = room_info['uniqueId']
+                logger.info(f"  [OK] roomId: {self.real_room_id}")
+                logger.info(f"  [OK] uniqueId: {self.unique_id}")
+            else:
+                logger.warning("  [WARN] 无法从页面获取roomId和uniqueId")
+                self.real_room_id = None
+                self.unique_id = None
+
             # 等待WebSocket连接建立
             logger.info("  等待WebSocket连接...")
             for i in range(30):  # 等待最多30秒
@@ -205,11 +255,34 @@ class DouyinConnectorReal:
             self.signature = signature_data['X-Bogus']
             logger.info(f"  [OK] X-Bogus签名: {self.signature}")
 
+            # 如果获取到了真实的roomId和uniqueId，获取IM初始化信息
+            if self.real_room_id and self.unique_id:
+                logger.info("  获取IM初始化参数...")
+                import time
+                now_ms = int(time.time() * 1000)
+
+                # 生成cursor和internal_ext（参考dycast的格式）
+                # cursor格式: t-{timestamp}_r-{room_id}_d-{device_id}_u-{user_id}_h-{hash}
+                self.im_cursor = f"t-{now_ms}_r-{self.real_room_id}_d-1_u-1"
+
+                # internal_ext格式: internal_src:dim|wss_push_room_id:{room_id}|wss_push_did:{unique_id}|...
+                self.im_internal_ext = f"internal_src:dim|wss_push_room_id:{self.real_room_id}|wss_push_did:{self.unique_id}|first_req_ms:{now_ms}|fetch_time:{now_ms}|seq:1|wss_info:0-{now_ms}-0-0"
+
+                logger.info(f"  [OK] cursor: {self.im_cursor[:80]}...")
+                logger.info(f"  [OK] internal_ext: {self.im_internal_ext[:80]}...")
+            else:
+                logger.warning("  [WARN] 未获取到roomId和uniqueId，将使用默认参数")
+                import time
+                now_ms = int(time.time() * 1000)
+                self.im_cursor = f"t-{now_ms}_r-{self.room_id}_d-1_u-1"
+                self.im_internal_ext = f"internal_src:dim|wss_push_room_id:{self.room_id}|wss_push_did:{int(time.time()*1000)}|first_req_ms:{now_ms}"
+
             # 如果捕获到了WebSocket URL，从中提取更多参数
             if self.captured_ws_url:
-                logger.info(f"  [OK] 将使用捕获的WebSocket URL连接")
+                logger.info(f"  [INFO] 已捕获WebSocket URL（但不会使用它）")
+                logger.info(f"  [INFO] 将使用独立生成的参数来接收弹幕")
             else:
-                logger.warning("  [WARN] 将使用构造的WebSocket URL")
+                logger.info(f"  [INFO] 将使用独立生成的参数连接")
 
             # 注意：不要在这里关闭浏览器，保持连接！
 
@@ -223,7 +296,7 @@ class DouyinConnectorReal:
         """
         建立WebSocket连接
 
-        优先使用从浏览器捕获的WebSocket URL，如果没有则使用构造的URL
+        使用独立的cursor和internal_ext参数构造URL，而不是复用浏览器的URL
 
         Returns:
             bool: 连接是否成功
@@ -235,33 +308,23 @@ class DouyinConnectorReal:
             "Referer": f"https://live.douyin.com/{self.room_id}",
         }
 
-        # 优先使用捕获的URL
-        if self.captured_ws_url:
-            try:
-                logger.info(f"  使用捕获的WebSocket URL连接")
-                logger.debug(f"  URL: {self.captured_ws_url[:100]}...")
+        # 使用独立的参数构造WebSocket URL
+        logger.info("  使用独立参数构造WebSocket URL")
 
-                self.ws = await websockets.connect(
-                    self.captured_ws_url,
-                    additional_headers=headers,
-                    ping_interval=None,
-                    close_timeout=10,
-                )
+        # 选择WebSocket服务器
+        import random
+        ws_server = random.choice(self.WS_SERVERS)
+        logger.info(f"  WebSocket服务器: {ws_server}")
 
-                logger.info(f"  [OK] WebSocket连接成功（使用捕获的URL）")
-                return True
-
-            except Exception as e:
-                logger.warning(f"  [WARN] 使用捕获URL连接失败: {e}")
-                logger.info(f"  尝试使用构造的URL...")
-
-        # 构造WebSocket URL（备用方案）
-        import urllib.parse
+        # 构造URL参数
+        import time
         from urllib.parse import urlencode
 
+        # 使用真实的roomId（如果获取到了），否则使用room_id
+        room_id_to_use = self.real_room_id if self.real_room_id else self.room_id
+
         # 生成用户唯一ID
-        import time
-        user_unique_id = f"{int(time.time() * 1000)}"
+        user_unique_id = self.unique_id if self.unique_id else f"{int(time.time() * 1000)}"
 
         params = {
             'app_name': 'douyin_web',
@@ -271,47 +334,54 @@ class DouyinConnectorReal:
             'compress': 'gzip',
             'device_platform': 'web',
             'cookie_enabled': 'true',
-            'screen_width': '1920',
-            'screen_height': '1080',
+            'screen_width': '2560',
+            'screen_height': '1440',
             'browser_language': 'zh-CN',
             'browser_platform': 'Win32',
             'browser_name': 'Mozilla',
+            'browser_version': '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'browser_online': 'true',
             'tz_name': 'Asia/Shanghai',
-            'cursor': '0-0',
-            'user_unique_id': user_unique_id,
-            'live_id': '1',
+            'cursor': self.im_cursor if self.im_cursor else f"t-{int(time.time()*1000)}_r-{room_id_to_use}_d-1_u-1",
+            'internal_ext': self.im_internal_ext if self.im_internal_ext else f"internal_src:dim|wss_push_room_id:{room_id_to_use}",
+            'host': 'https://live.douyin.com',
             'aid': '6383',
+            'live_id': '1',
             'did_rule': '3',
             'endpoint': 'live_pc',
+            'support_wrds': '1',
+            'user_unique_id': user_unique_id,
+            'im_path': '/webcast/im/fetch/',
             'identity': 'audience',
-            'room_id': self.room_id,
-            'signature': self.signature,
+            'need_persist_msg_count': '15',
+            'insert_task_id': '',
+            'live_reason': '',
+            'room_id': room_id_to_use,
+            'heartbeatDuration': '0',
+            'signature': self.signature if self.signature else ''
         }
 
-        # 尝试多个服务器
-        for server in self.WS_SERVERS:
-            try:
-                ws_url = f"{server}/webcast/im/push/v2/?{urlencode(params)}"
-                logger.info(f"  尝试连接: {server}")
-                logger.debug(f"  URL参数: {len(params)} 个")
+        # 构造完整URL（注意路径是/webcast/im/push/v2/）
+        ws_url = f"{ws_server}/webcast/im/push/v2/?{urlencode(params)}"
 
-                self.ws = await websockets.connect(
-                    ws_url,
-                    additional_headers=headers,
-                    ping_interval=None,
-                    close_timeout=10,
-                )
+        logger.info(f"  WebSocket URL长度: {len(ws_url)} 字符")
+        logger.debug(f"  room_id: {room_id_to_use}")
+        logger.debug(f"  user_unique_id: {user_unique_id}")
 
-                logger.info(f"  [OK] WebSocket连接成功")
-                return True
+        try:
+            self.ws = await websockets.connect(
+                ws_url,
+                additional_headers=headers,
+                ping_interval=None,
+                close_timeout=10,
+            )
 
-            except Exception as e:
-                logger.warning(f"  [WARN] 连接{server}失败: {e}")
-                continue
+            logger.info(f"  [OK] WebSocket连接成功（使用独立参数）")
+            return True
 
-        logger.error("  [FAIL] 所有服务器连接失败")
-        return False
+        except Exception as e:
+            logger.error(f"  [FAIL] WebSocket连接失败: {e}")
+            return False
 
     async def listen(self, message_handler: Callable):
         """

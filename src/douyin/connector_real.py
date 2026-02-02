@@ -53,6 +53,9 @@ class DouyinConnectorReal:
         # 签名
         self.signature = None
 
+        # 完整的WebSocket URL（从浏览器捕获）
+        self.captured_ws_url = None
+
     async def connect(self) -> bool:
         """
         建立WebSocket连接
@@ -97,10 +100,10 @@ class DouyinConnectorReal:
 
     async def _get_signature(self) -> bool:
         """
-        使用Playwright获取X-Bogus签名
+        使用Playwright获取X-Bogus签名并捕获WebSocket URL
 
         Returns:
-            bool: 是否成功获取签名
+            bool: 是否成功获取签名和WebSocket URL
         """
         try:
             async with async_playwright() as p:
@@ -114,14 +117,9 @@ class DouyinConnectorReal:
                     logger.info("  chrome.exe --remote-debugging-port=9222")
                     return False
 
-                # 获取或创建context
-                contexts = self.browser.contexts
-                if contexts:
-                    self.context = contexts[0]
-                    logger.info(f"  [OK] 使用现有context")
-                else:
-                    self.context = await self.browser.new_context()
-                    logger.info("  [OK] 创建新context")
+                # 创建新的context（避免其他标签页干扰）
+                self.context = await self.browser.new_context()
+                logger.info("  [OK] 创建新context")
 
                 # 设置cookie
                 await self.context.add_cookies([{
@@ -132,8 +130,20 @@ class DouyinConnectorReal:
                 }])
                 logger.info("  [OK] 已设置cookie")
 
-                # 创建页面
+                # 创建页面并监听WebSocket
                 self.page = await self.context.new_page()
+
+                # 监听WebSocket连接以捕获URL
+                ws_url_holder = []
+
+                def on_websocket(ws):
+                    url = ws.url
+                    if 'webcast' in url and 'douyin.com' in url:
+                        logger.info(f"  [捕获] 发现WebSocket连接")
+                        ws_url_holder.append(url)
+                        logger.debug(f"  WebSocket URL长度: {len(url)} 字符")
+
+                self.page.on("websocket", on_websocket)
 
                 # 访问直播间
                 url = f"https://live.douyin.com/{self.room_id}"
@@ -142,10 +152,20 @@ class DouyinConnectorReal:
                 await self.page.goto(url, wait_until='domcontentloaded', timeout=30000)
                 logger.info("  [OK] 页面加载完成")
 
-                # 等待JavaScript初始化
-                await asyncio.sleep(2)
+                # 等待WebSocket连接建立
+                logger.info("  等待WebSocket连接...")
+                for i in range(30):  # 等待最多30秒
+                    await asyncio.sleep(1)
+                    if ws_url_holder:
+                        self.captured_ws_url = ws_url_holder[0]
+                        logger.info(f"  [OK] 捕获到WebSocket URL")
+                        logger.debug(f"  等待2秒让浏览器连接稳定...")
+                        await asyncio.sleep(2)  # 等待浏览器连接稳定
+                        break
+                else:
+                    logger.warning("  [WARN] 未捕获到WebSocket连接，尝试手动获取签名")
 
-                # 调用frontierSign获取签名
+                # 调用frontierSign获取签名（作为备用）
                 signature_data = await self.page.evaluate('''() => {
                     if (window.byted_acrawler && window.byted_acrawler.frontierSign) {
                         const result = window.byted_acrawler.frontierSign({
@@ -164,6 +184,13 @@ class DouyinConnectorReal:
 
                 self.signature = signature_data['X-Bogus']
                 logger.info(f"  [OK] X-Bogus签名: {self.signature}")
+
+                # 如果捕获到了WebSocket URL，从中提取更多参数
+                if self.captured_ws_url:
+                    logger.info(f"  [OK] 将使用捕获的WebSocket URL连接")
+                else:
+                    logger.warning("  [WARN] 将使用构造的WebSocket URL")
+
                 return True
 
         except Exception as e:
@@ -174,12 +201,39 @@ class DouyinConnectorReal:
         """
         建立WebSocket连接
 
+        优先使用从浏览器捕获的WebSocket URL，如果没有则使用构造的URL
+
         Returns:
             bool: 连接是否成功
         """
-        # 构造WebSocket URL
-        # 基于dycast项目和实际捕获的URL
+        headers = {
+            "Cookie": f"ttwid={self.ttwid}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Origin": "https://live.douyin.com",
+            "Referer": f"https://live.douyin.com/{self.room_id}",
+        }
 
+        # 优先使用捕获的URL
+        if self.captured_ws_url:
+            try:
+                logger.info(f"  使用捕获的WebSocket URL连接")
+                logger.debug(f"  URL: {self.captured_ws_url[:100]}...")
+
+                self.ws = await websockets.connect(
+                    self.captured_ws_url,
+                    additional_headers=headers,
+                    ping_interval=None,
+                    close_timeout=10,
+                )
+
+                logger.info(f"  [OK] WebSocket连接成功（使用捕获的URL）")
+                return True
+
+            except Exception as e:
+                logger.warning(f"  [WARN] 使用捕获URL连接失败: {e}")
+                logger.info(f"  尝试使用构造的URL...")
+
+        # 构造WebSocket URL（备用方案）
         import urllib.parse
         from urllib.parse import urlencode
 
@@ -219,13 +273,6 @@ class DouyinConnectorReal:
                 ws_url = f"{server}/webcast/im/push/v2/?{urlencode(params)}"
                 logger.info(f"  尝试连接: {server}")
                 logger.debug(f"  URL参数: {len(params)} 个")
-
-                headers = {
-                    "Cookie": f"ttwid={self.ttwid}",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Origin": "https://live.douyin.com",
-                    "Referer": f"https://live.douyin.com/{self.room_id}",
-                }
 
                 self.ws = await websockets.connect(
                     ws_url,

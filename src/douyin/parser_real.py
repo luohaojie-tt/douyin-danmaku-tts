@@ -203,12 +203,19 @@ class RealtimeMessageParser:
         Returns:
             str: 消息类型
         """
+        # DEBUG: 打印前5个字符串（仅在调试模式）
+        if logger.isEnabledFor(logging.DEBUG):
+            for i, s in enumerate(strings[:5]):
+                logger.debug(f"    字符串 #{i+1}: {s['text'][:80]}")
+
         for s in strings:
             text = s['text']
 
             # 检查是否是已知消息类型
             if 'WebcastChatMessage' in text:
                 return "WebChatMessage"
+            elif 'WebcastRoomCommentTopicMessage' in text:
+                return "WebChatMessage"  # 话题讨论消息也包含弹幕
             elif 'WebcastGiftMessage' in text:
                 return "WebGiftMessage"
             elif 'WebcastRoomStatsMessage' in text:
@@ -217,6 +224,10 @@ class RealtimeMessageParser:
                 return "WebcastRoomUserSeqMessage"
             elif 'WebcastLikeMessage' in text:
                 return "WebcastLikeMessage"
+            elif 'MemberMessage' in text:
+                return "MemberMessage"
+            elif 'ControlMessage' in text:
+                return "ControlMessage"
 
         return "Unknown"
 

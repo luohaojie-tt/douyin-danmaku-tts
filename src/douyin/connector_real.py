@@ -15,6 +15,8 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 import websockets
 
+from .protobuf import PushFrameCodec, PushFrameFactory
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +48,7 @@ class DouyinConnectorReal:
         self.is_connected = False
 
         # Playwright浏览器实例
+        self.playwright = None  # 保存playwright实例
         self.browser = None
         self.context = None
         self.page = None
@@ -55,6 +58,15 @@ class DouyinConnectorReal:
 
         # 完整的WebSocket URL（从浏览器捕获）
         self.captured_ws_url = None
+
+        # 心跳相关
+        self.heartbeat_task = None
+        self.heartbeat_interval = 10  # 心跳间隔（秒）
+        self.should_stop_heartbeat = False
+
+        # ACK相关 - 存储需要确认的消息信息
+        self.last_internal_ext = None
+        self.last_log_id = None
 
     async def connect(self) -> bool:
         """
@@ -89,6 +101,11 @@ class DouyinConnectorReal:
             logger.info("[OK] WebSocket连接成功")
             self.is_connected = True
 
+            # 步骤3: 启动心跳
+            logger.info("步骤3: 启动心跳...")
+            await self._start_heartbeat()
+            logger.info("[OK] 心跳已启动")
+
             logger.info("="*60)
             logger.info("连接器启动成功")
             logger.info("="*60)
@@ -106,92 +123,97 @@ class DouyinConnectorReal:
             bool: 是否成功获取签名和WebSocket URL
         """
         try:
-            async with async_playwright() as p:
-                # 连接到Chrome
-                try:
-                    self.browser = await p.chromium.connect_over_cdp("http://localhost:9222")
-                    logger.info("  [OK] 已连接到Chrome")
-                except Exception as e:
-                    logger.error(f"  [FAIL] 无法连接到Chrome: {e}")
-                    logger.info("  提示: 请启动Chrome调试模式:")
-                    logger.info("  chrome.exe --remote-debugging-port=9222")
-                    return False
+            # 创建playwright实例并保存（不使用async with，避免自动关闭）
+            self.playwright = async_playwright()
+            p = await self.playwright.__aenter__()
 
-                # 创建新的context（避免其他标签页干扰）
-                self.context = await self.browser.new_context()
-                logger.info("  [OK] 创建新context")
+            # 连接到Chrome
+            try:
+                self.browser = await p.chromium.connect_over_cdp("http://localhost:9222")
+                logger.info("  [OK] 已连接到Chrome")
+            except Exception as e:
+                logger.error(f"  [FAIL] 无法连接到Chrome: {e}")
+                logger.info("  提示: 请启动Chrome调试模式:")
+                logger.info("  chrome.exe --remote-debugging-port=9222")
+                return False
 
-                # 设置cookie
-                await self.context.add_cookies([{
-                    'name': 'ttwid',
-                    'value': self.ttwid,
-                    'domain': '.douyin.com',
-                    'path': '/'
-                }])
-                logger.info("  [OK] 已设置cookie")
+            # 创建新的context（避免其他标签页干扰）
+            self.context = await self.browser.new_context()
+            logger.info("  [OK] 创建新context")
 
-                # 创建页面并监听WebSocket
-                self.page = await self.context.new_page()
+            # 设置cookie
+            await self.context.add_cookies([{
+                'name': 'ttwid',
+                'value': self.ttwid,
+                'domain': '.douyin.com',
+                'path': '/'
+            }])
+            logger.info("  [OK] 已设置cookie")
 
-                # 监听WebSocket连接以捕获URL
-                ws_url_holder = []
+            # 创建页面并监听WebSocket
+            self.page = await self.context.new_page()
 
-                def on_websocket(ws):
-                    url = ws.url
-                    if 'webcast' in url and 'douyin.com' in url:
-                        logger.info(f"  [捕获] 发现WebSocket连接")
-                        ws_url_holder.append(url)
-                        logger.debug(f"  WebSocket URL长度: {len(url)} 字符")
+            # 监听WebSocket连接以捕获URL
+            ws_url_holder = []
 
-                self.page.on("websocket", on_websocket)
+            def on_websocket(ws):
+                url = ws.url
+                if 'webcast' in url and 'douyin.com' in url:
+                    logger.info(f"  [捕获] 发现WebSocket连接")
+                    ws_url_holder.append(url)
+                    logger.debug(f"  WebSocket URL长度: {len(url)} 字符")
 
-                # 访问直播间
-                url = f"https://live.douyin.com/{self.room_id}"
-                logger.info(f"  访问直播间: {url}")
+            self.page.on("websocket", on_websocket)
 
-                await self.page.goto(url, wait_until='domcontentloaded', timeout=30000)
-                logger.info("  [OK] 页面加载完成")
+            # 访问直播间
+            url = f"https://live.douyin.com/{self.room_id}"
+            logger.info(f"  访问直播间: {url}")
 
-                # 等待WebSocket连接建立
-                logger.info("  等待WebSocket连接...")
-                for i in range(30):  # 等待最多30秒
-                    await asyncio.sleep(1)
-                    if ws_url_holder:
-                        self.captured_ws_url = ws_url_holder[0]
-                        logger.info(f"  [OK] 捕获到WebSocket URL")
-                        logger.debug(f"  等待2秒让浏览器连接稳定...")
-                        await asyncio.sleep(2)  # 等待浏览器连接稳定
-                        break
-                else:
-                    logger.warning("  [WARN] 未捕获到WebSocket连接，尝试手动获取签名")
+            await self.page.goto(url, wait_until='domcontentloaded', timeout=30000)
+            logger.info("  [OK] 页面加载完成")
 
-                # 调用frontierSign获取签名（作为备用）
-                signature_data = await self.page.evaluate('''() => {
-                    if (window.byted_acrawler && window.byted_acrawler.frontierSign) {
-                        const result = window.byted_acrawler.frontierSign({
-                            room_id: window.location.pathname.slice(1)
-                        });
-                        return {
-                            'X-Bogus': result['X-Bogus'] || result.X-Bogus || ''
-                        };
-                    }
-                    return null;
-                }''')
+            # 等待WebSocket连接建立
+            logger.info("  等待WebSocket连接...")
+            for i in range(30):  # 等待最多30秒
+                await asyncio.sleep(1)
+                if ws_url_holder:
+                    self.captured_ws_url = ws_url_holder[0]
+                    logger.info(f"  [OK] 捕获到WebSocket URL")
+                    logger.debug(f"  等待2秒让浏览器连接稳定...")
+                    await asyncio.sleep(2)  # 等待浏览器连接稳定
+                    break
+            else:
+                logger.warning("  [WARN] 未捕获到WebSocket连接，尝试手动获取签名")
 
-                if not signature_data or not signature_data.get('X-Bogus'):
-                    logger.error("  [FAIL] 无法获取X-Bogus签名")
-                    return False
+            # 调用frontierSign获取签名（作为备用）
+            signature_data = await self.page.evaluate('''() => {
+                if (window.byted_acrawler && window.byted_acrawler.frontierSign) {
+                    const result = window.byted_acrawler.frontierSign({
+                        room_id: window.location.pathname.slice(1)
+                    });
+                    return {
+                        'X-Bogus': result['X-Bogus'] || result.X-Bogus || ''
+                    };
+                }
+                return null;
+            }''')
 
-                self.signature = signature_data['X-Bogus']
-                logger.info(f"  [OK] X-Bogus签名: {self.signature}")
+            if not signature_data or not signature_data.get('X-Bogus'):
+                logger.error("  [FAIL] 无法获取X-Bogus签名")
+                return False
 
-                # 如果捕获到了WebSocket URL，从中提取更多参数
-                if self.captured_ws_url:
-                    logger.info(f"  [OK] 将使用捕获的WebSocket URL连接")
-                else:
-                    logger.warning("  [WARN] 将使用构造的WebSocket URL")
+            self.signature = signature_data['X-Bogus']
+            logger.info(f"  [OK] X-Bogus签名: {self.signature}")
 
-                return True
+            # 如果捕获到了WebSocket URL，从中提取更多参数
+            if self.captured_ws_url:
+                logger.info(f"  [OK] 将使用捕获的WebSocket URL连接")
+            else:
+                logger.warning("  [WARN] 将使用构造的WebSocket URL")
+
+            # 注意：不要在这里关闭浏览器，保持连接！
+
+            return True
 
         except Exception as e:
             logger.error(f"  [ERROR] 获取签名失败: {e}")
@@ -304,6 +326,25 @@ class DouyinConnectorReal:
         try:
             async for raw_message in self.ws:
                 try:
+                    # 解析PushFrame获取internal_ext和log_id
+                    if isinstance(raw_message, bytes):
+                        frame = PushFrameCodec.decode(raw_message)
+                        if frame:
+                            logger.debug(f"  [Frame] payload_type: {frame.payload_type}, has_payload: {frame.payload is not None}")
+
+                            if frame.payload:
+                                # 解析Response检查是否需要ACK
+                                need_ack, internal_ext = self._parse_response_for_ack(frame.payload)
+                                logger.debug(f"  [Response] need_ack: {need_ack}, internal_ext: {internal_ext[:30] if internal_ext else 'None'}...")
+
+                                if need_ack:
+                                    # 保存用于ACK
+                                    self.last_internal_ext = internal_ext
+                                    self.last_log_id = frame.log_id
+
+                                    # 发送ACK确认
+                                    await self._send_ack_if_needed()
+
                     # 处理消息
                     if asyncio.iscoroutinefunction(message_handler):
                         await message_handler(raw_message)
@@ -323,6 +364,9 @@ class DouyinConnectorReal:
         """断开连接"""
         logger.info("正在断开连接...")
 
+        # 停止心跳
+        await self._stop_heartbeat()
+
         # 关闭WebSocket
         if self.ws:
             try:
@@ -330,12 +374,156 @@ class DouyinConnectorReal:
             except:
                 pass
 
-        # 关闭浏览器
+        # 关闭页面和context
+        if self.page:
+            try:
+                await self.page.close()
+            except:
+                pass
+
+        if self.context:
+            try:
+                await self.context.close()
+            except:
+                pass
+
+        # 关闭浏览器和playwright
         if self.browser:
             try:
                 await self.browser.close()
             except:
                 pass
 
+        if self.playwright:
+            try:
+                await self.playwright.__aexit__(None, None, None)
+            except:
+                pass
+
         self.is_connected = False
         logger.info("已断开连接")
+
+    async def _start_heartbeat(self):
+        """启动心跳任务"""
+        self.should_stop_heartbeat = False
+        self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        logger.debug("  [Heartbeat] 心跳任务已创建")
+
+    async def _stop_heartbeat(self):
+        """停止心跳任务"""
+        self.should_stop_heartbeat = True
+        if self.heartbeat_task:
+            self.heartbeat_task.cancel()
+            try:
+                await self.heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self.heartbeat_task = None
+            logger.debug("  [Heartbeat] 心跳任务已停止")
+
+    async def _heartbeat_loop(self):
+        """心跳循环"""
+        logger.info("  [Heartbeat] 心跳循环已启动，间隔: {}秒".format(self.heartbeat_interval))
+
+        while not self.should_stop_heartbeat:
+            try:
+                await asyncio.sleep(self.heartbeat_interval)
+
+                if self.should_stop_heartbeat:
+                    break
+
+                # 发送心跳帧
+                await self._send_heartbeat()
+
+            except asyncio.CancelledError:
+                logger.debug("  [Heartbeat] 心跳任务被取消")
+                break
+            except Exception as e:
+                logger.error(f"  [Heartbeat] 心跳发送失败: {e}")
+
+    async def _send_heartbeat(self):
+        """发送心跳帧"""
+        try:
+            if self.ws and self.is_connected:
+                heartbeat_frame = PushFrameFactory.create_heartbeat()
+                await self.ws.send(heartbeat_frame)
+                logger.info(f"  [Heartbeat] 心跳已发送 (帧长度: {len(heartbeat_frame)} 字节)")
+        except Exception as e:
+            logger.error(f"  [Heartbeat] 发送心跳异常: {e}")
+
+    async def _send_ack_if_needed(self):
+        """
+        发送ACK确认
+
+        参考dycast第611-623行的逻辑
+        """
+        try:
+            if self.last_internal_ext and self.ws and self.is_connected:
+                ack_frame = PushFrameFactory.create_ack(
+                    self.last_internal_ext,
+                    self.last_log_id
+                )
+                await self.ws.send(ack_frame)
+                logger.info(f"  [ACK] 已发送确认 (log_id: {self.last_log_id}, 长度: {len(ack_frame)} 字节)")
+        except Exception as e:
+            logger.error(f"  [ACK] 发送ACK异常: {e}")
+
+    def _parse_response_for_ack(self, payload: bytes) -> tuple[bool, str]:
+        """
+        解析Response检查是否需要ACK
+
+        Args:
+            payload: PushFrame的payload字段
+
+        Returns:
+            (need_ack, internal_ext)
+        """
+        need_ack = False
+        internal_ext = ""
+
+        try:
+            pos = 0
+            while pos < len(payload):
+                # 读取tag
+                tag, pos = self._decode_varint(payload, pos)
+                field_number = tag >> 3
+                wire_type = tag & 0x07
+
+                if field_number == 2 and wire_type == 2:  # internal_ext
+                    length, pos = self._decode_varint(payload, pos)
+                    internal_ext = payload[pos:pos + length].decode('utf-8', errors='ignore')
+                    pos += length
+                elif field_number == 9 and wire_type == 0:  # need_ack
+                    # bool类型，读取一个字节
+                    if pos < len(payload):
+                        need_ack = bool(payload[pos])
+                        pos += 1
+                else:
+                    # 跳过其他字段
+                    if wire_type == 0:  # varint
+                        _, pos = self._decode_varint(payload, pos)
+                    elif wire_type == 2:  # length-delimited
+                        length, pos = self._decode_varint(payload, pos)
+                        pos += length
+                    else:
+                        pos += 1
+
+        except Exception as e:
+            logger.debug(f"解析Response失败: {e}")
+
+        return need_ack, internal_ext
+
+    @staticmethod
+    def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
+        """解码varint，返回(value, new_pos)"""
+        result = 0
+        shift = 0
+        while pos < len(data):
+            byte = data[pos]
+            pos += 1
+            result |= (byte & 0x7F) << shift
+            if not (byte & 0x80):
+                break
+            shift += 7
+        return result, pos
+

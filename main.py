@@ -85,6 +85,10 @@ class DanmakuOrchestrator:
         self.tts = None
         self.player = None
 
+        # 播放队列（确保弹幕按顺序播放，不打断）
+        self.play_queue = asyncio.Queue()
+        self.play_task = None
+
         self.is_running = False
 
     async def initialize(self):
@@ -160,6 +164,10 @@ class DanmakuOrchestrator:
         logger.info("="*60)
         logger.info("初始化完成")
         logger.info("="*60)
+
+        # 启动播放队列工作线程
+        self.play_task = asyncio.create_task(self._play_queue_worker())
+
         return True
 
     async def handle_message(self, raw_message):
@@ -253,19 +261,55 @@ class DanmakuOrchestrator:
                 logger.warning("语音转换失败，跳过播放")
                 return
 
-            # 4. 播放语音
-            logger.debug("开始播放语音...")
-            success = self.player.play(audio_path, blocking=False)
+            # 4. 将音频路径放入播放队列（等待前一条播放完成）
+            await self.play_queue.put({
+                'audio_path': audio_path,
+                'content': content
+            })
 
-            if success:
-                self.stats["messages_played"] += 1
-                logger.info(f"播报成功 (总计: {self.stats['messages_played']})")
-            else:
-                logger.warning("播放失败")
+            self.stats["messages_played"] += 1
+            logger.info(f"加入播放队列 (总计: {self.stats['messages_played']})")
 
         except Exception as e:
             logger.error(f"处理消息失败: {e}")
             self.stats["errors"] += 1
+
+    async def _play_queue_worker(self):
+        """播放队列工作线程 - 确保弹幕按顺序播放，不打断"""
+        logger.info("播放队列工作线程已启动")
+        try:
+            while self.is_running:
+                try:
+                    # 从队列获取待播放的音频（带超时，避免永久阻塞）
+                    play_item = await asyncio.wait_for(
+                        self.play_queue.get(),
+                        timeout=1.0
+                    )
+
+                    audio_path = play_item['audio_path']
+                    content = play_item['content']
+
+                    # 播放语音（阻塞模式，等待播放完成）
+                    logger.debug(f"开始播放: {content}")
+                    success = self.player.play(audio_path, blocking=True)
+
+                    if not success:
+                        logger.warning(f"播放失败: {content}")
+
+                    # 标记队列任务完成
+                    self.play_queue.task_done()
+
+                except asyncio.TimeoutError:
+                    # 超时继续循环
+                    continue
+                except Exception as e:
+                    logger.error(f"播放队列处理失败: {e}")
+                    self.stats["errors"] += 1
+
+        except Exception as e:
+            logger.error(f"播放队列工作线程异常: {e}")
+        finally:
+            logger.info("播放队列工作线程已停止")
 
     async def run(self):
         """运行主循环"""
@@ -321,6 +365,24 @@ class DanmakuOrchestrator:
         logger.info("="*60)
 
         self.is_running = False
+
+        # 停止播放队列工作线程
+        if self.play_task:
+            logger.info("等待播放队列完成...")
+            try:
+                # 等待队列中的任务完成（最多等待5秒）
+                await asyncio.wait_for(self.play_queue.join(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("播放队列未在5秒内完成，强制停止")
+            except Exception as e:
+                logger.error(f"等待播放队列完成时出错: {e}")
+
+            # 取消播放任务
+            self.play_task.cancel()
+            try:
+                await self.play_task
+            except asyncio.CancelledError:
+                pass
 
         # 断开连接
         if self.connector:

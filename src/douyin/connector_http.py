@@ -135,8 +135,26 @@ class DouyinHTTPConnector:
         """主动轮询获取新弹幕"""
         logger.info("启动弹幕轮询任务...")
 
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+
         while self.is_running:
             try:
+                # 检查浏览器是否还连接
+                if self.page and self.browser:
+                    try:
+                        is_closed = await self.page.is_closed()
+                        if is_closed:
+                            logger.error("="*60)
+                            logger.error("❌ 浏览器页面已关闭！")
+                            logger.error("="*60)
+                            logger.error("请重新启动Chrome调试模式：")
+                            logger.error("  .\\start_chrome_debug.bat")
+                            logger.error("="*60)
+                            break
+                    except:
+                        pass
+
                 # 使用JavaScript在浏览器中发送fetch请求
                 # 这样可以自动处理所有签名参数
                 result = await self.page.evaluate('''async () => {
@@ -204,12 +222,21 @@ class DouyinHTTPConnector:
                         if messages:
                             chat_count = sum(1 for m in messages if m.method == "WebChatMessage")
                             logger.info(f"[轮询] 获取到 {len(messages)} 条消息，其中 {chat_count} 条聊天")
+                            consecutive_errors = 0  # 重置错误计数
 
                 # 等待下次轮询
                 await asyncio.sleep(self.poll_interval)
 
             except Exception as e:
-                logger.error(f"轮询失败: {e}")
+                consecutive_errors += 1
+                logger.error(f"轮询失败 ({consecutive_errors}/{max_consecutive_errors}): {e}")
+
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error("="*60)
+                    logger.error("❌ 连续错误过多，停止轮询")
+                    logger.error("="*60)
+                    break
+
                 await asyncio.sleep(self.poll_interval)
 
     async def listen(self, message_handler: Callable):

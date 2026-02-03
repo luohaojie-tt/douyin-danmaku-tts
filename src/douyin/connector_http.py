@@ -87,6 +87,9 @@ class DouyinHTTPConnector:
             # 等待页面加载
             await asyncio.sleep(3)
 
+            # 启动轮询任务
+            self.poll_task = asyncio.create_task(self._poll_messages())
+
             logger.info("="*60)
             logger.info("连接器启动成功")
             logger.info("="*60)
@@ -123,10 +126,91 @@ class DouyinHTTPConnector:
 
                 if messages:
                     chat_count = sum(1 for m in messages if m.method == "WebChatMessage")
-                    logger.debug(f"获取到 {len(messages)} 条消息，其中 {chat_count} 条聊天")
+                    logger.info(f"[轮询] 获取到 {len(messages)} 条消息，其中 {chat_count} 条聊天")
 
         except Exception as e:
             logger.debug(f"处理响应失败: {e}")
+
+    async def _poll_messages(self):
+        """主动轮询获取新弹幕"""
+        logger.info("启动弹幕轮询任务...")
+
+        while self.is_running:
+            try:
+                # 使用JavaScript在浏览器中发送fetch请求
+                # 这样可以自动处理所有签名参数
+                result = await self.page.evaluate('''async () => {
+                    try {
+                        // 从页面中获取内部room_id
+                        const getInternalRoomId = () => {
+                            if (window.__pace_f) {
+                                for (let i = 0; i < window.__pace_f.length; i++) {
+                                    if (window.__pace_f[i]) {
+                                        const items = Array.isArray(window.__pace_f[i]) ? window.__pace_f[i] : [window.__pace_f[i]];
+                                        for (const item of items) {
+                                            if (typeof item === 'string') {
+                                                const match = item.match(/"roomId":"(\\d+)"/);
+                                                if (match) return match[1];
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return null;
+                        };
+
+                        const roomId = getInternalRoomId();
+                        if (!roomId) return null;
+
+                        // 构建请求URL（使用页面已有的参数）
+                        const url = `/webcast/im/fetch/?room_id=${roomId}&need_persist_msg_count=15&fetch_rule=1`;
+
+                        // 发送fetch请求
+                        const response = await fetch(url, {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+
+                        if (!response.ok) return null;
+
+                        const arrayBuffer = await response.arrayBuffer();
+                        // 转换为base64以便传递
+                        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+                        return {
+                            success: true,
+                            data: base64,
+                            length: arrayBuffer.byteLength
+                        };
+                    } catch (e) {
+                        return {
+                            success: false,
+                            error: e.toString()
+                        };
+                    }
+                }''')
+
+                if result and result.get('success'):
+                    import base64
+                    # 解析base64数据
+                    data = base64.b64decode(result['data'])
+
+                    # 如果有数据，解析并放入队列
+                    if len(data) > 0:
+                        messages = self.parser.parse_response(data)
+                        for msg in messages:
+                            await self.message_queue.put(msg)
+
+                        if messages:
+                            chat_count = sum(1 for m in messages if m.method == "WebChatMessage")
+                            logger.info(f"[轮询] 获取到 {len(messages)} 条消息，其中 {chat_count} 条聊天")
+
+                # 等待下次轮询
+                await asyncio.sleep(self.poll_interval)
+
+            except Exception as e:
+                logger.error(f"轮询失败: {e}")
+                await asyncio.sleep(self.poll_interval)
 
     async def listen(self, message_handler: Callable):
         """监听消息"""
@@ -162,6 +246,14 @@ class DouyinHTTPConnector:
         logger.info("正在断开连接...")
 
         self.is_running = False
+
+        # 停止轮询任务
+        if hasattr(self, 'poll_task'):
+            self.poll_task.cancel()
+            try:
+                await self.poll_task
+            except asyncio.CancelledError:
+                pass
 
         # 关闭页面
         if self.page:

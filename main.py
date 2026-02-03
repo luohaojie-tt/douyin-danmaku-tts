@@ -26,6 +26,7 @@ from src.douyin.cookie import CookieManager
 from src.douyin.connector import DouyinConnector, DouyinConnectorMock
 from src.douyin.connector_real import DouyinConnectorReal
 from src.douyin.connector_http import DouyinHTTPConnector
+from src.douyin.connector_websocket_listener import WebSocketListenerConnector
 from src.douyin.parser import MessageParser
 from src.douyin.parser_real import RealtimeMessageParser
 from src.tts.edge_tts import EdgeTTSEngine
@@ -47,7 +48,8 @@ class DanmakuOrchestrator:
         config_path: str = "config.ini",
         use_mock: bool = False,
         use_real: bool = False,
-        use_http: bool = False
+        use_http: bool = False,
+        use_ws: bool = False
     ):
         """
         初始化编排器
@@ -58,6 +60,7 @@ class DanmakuOrchestrator:
             use_mock: 是否使用Mock连接器
             use_real: 是否使用真实连接器（Playwright）
             use_http: 是否使用HTTP轮询连接器
+            use_ws: 是否使用WebSocket监听连接器（推荐）
         """
         self.room_id = room_id
         self.config_path = config_path
@@ -130,6 +133,12 @@ class DanmakuOrchestrator:
             logger.info("使用Mock连接器（测试模式）")
             self.connector = DouyinConnectorMock(self.room_id, self.ttwid)
             self.parser = MessageParser()
+        elif self.use_ws:
+            logger.info("使用WebSocket监听连接器（推荐）...")
+            logger.info("  提示: 需要Chrome在调试模式下运行")
+            logger.info("  启动命令: chrome.exe --remote-debugging-port=9222")
+            self.connector = WebSocketListenerConnector(self.room_id, self.ttwid)
+            self.parser = MessageParser()  # WebSocketListenerConnector返回ParsedMessage，不需要解析器
         elif self.use_http:
             logger.info("使用HTTP轮询连接器...")
             logger.info("  提示: 需要Chrome在调试模式下运行")
@@ -268,6 +277,10 @@ class DanmakuOrchestrator:
                 logger.error("连接直播间失败")
                 if self.use_mock:
                     logger.info("提示：Mock模式已启用")
+                elif self.use_ws:
+                    logger.info("提示：WebSocket监听失败，请检查:")
+                    logger.info("  1. Chrome是否在调试模式下运行？")
+                    logger.info("  2. 启动命令: chrome.exe --remote-debugging-port=9222")
                 elif self.use_http:
                     logger.info("提示：HTTP连接失败，请检查:")
                     logger.info("  1. Chrome是否在调试模式下运行？")
@@ -277,8 +290,9 @@ class DanmakuOrchestrator:
                     logger.info("  1. Chrome是否在调试模式下运行？")
                     logger.info("  2. 启动命令: chrome.exe --remote-debugging-port=9222")
                 else:
-                    logger.info("提示：可以使用 --mock、--http 或 --real 参数")
+                    logger.info("提示：可以使用 --mock、--ws、--http 或 --real 参数")
                     logger.info("  --mock: Mock模式（不需要Chrome）")
+                    logger.info("  --ws: WebSocket监听模式（推荐，需要Chrome调试模式）")
                     logger.info("  --http: HTTP轮询模式（需要Chrome调试模式）")
                     logger.info("  --real: 真实模式（需要Chrome调试模式）")
                 return False
@@ -341,13 +355,14 @@ def parse_arguments():
 示例:
   python main.py 728804746624
   python main.py 728804746624 --mock      # 使用Mock模式
-  python main.py 728804746624 --http      # 使用HTTP轮询（推荐，需要Chrome调试模式）
+  python main.py 728804746624 --ws        # 使用WebSocket监听（推荐，需要Chrome调试模式）
+  python main.py 728804746624 --http      # 使用HTTP轮询（需要Chrome调试模式）
   python main.py 728804746624 --real      # 使用真实连接（需要Chrome调试模式）
   python main.py 728804746624 --debug
   python main.py 728804746624 --config custom.ini
 
 注意：
-  --http 和 --real 模式需要Chrome在调试模式下运行:
+  --ws、--http 和 --real 模式需要Chrome在调试模式下运行:
   启动命令: chrome.exe --remote-debugging-port=9222
         """
     )
@@ -373,6 +388,12 @@ def parse_arguments():
         "--http",
         action="store_true",
         help="使用HTTP轮询连接器（需要Chrome调试模式）"
+    )
+
+    parser.add_argument(
+        "--ws",
+        action="store_true",
+        help="使用WebSocket监听连接器（推荐，需要Chrome调试模式）"
     )
 
     parser.add_argument(
@@ -445,7 +466,8 @@ async def main_async():
         config_path=args.config,
         use_mock=args.mock,
         use_real=args.real,
-        use_http=args.http
+        use_http=args.http,
+        use_ws=args.ws
     )
 
     # 初始化

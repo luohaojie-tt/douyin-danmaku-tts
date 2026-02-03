@@ -25,6 +25,7 @@ from src.config.loader import load_config
 from src.douyin.cookie import CookieManager
 from src.douyin.connector import DouyinConnector, DouyinConnectorMock
 from src.douyin.connector_real import DouyinConnectorReal
+from src.douyin.connector_http import DouyinHTTPConnector
 from src.douyin.parser import MessageParser
 from src.douyin.parser_real import RealtimeMessageParser
 from src.tts.edge_tts import EdgeTTSEngine
@@ -45,7 +46,8 @@ class DanmakuOrchestrator:
         room_id: str,
         config_path: str = "config.ini",
         use_mock: bool = False,
-        use_real: bool = False
+        use_real: bool = False,
+        use_http: bool = False
     ):
         """
         初始化编排器
@@ -55,11 +57,13 @@ class DanmakuOrchestrator:
             config_path: 配置文件路径
             use_mock: 是否使用Mock连接器
             use_real: 是否使用真实连接器（Playwright）
+            use_http: 是否使用HTTP轮询连接器
         """
         self.room_id = room_id
         self.config_path = config_path
         self.use_mock = use_mock
         self.use_real = use_real
+        self.use_http = use_http
 
         # 统计信息
         self.stats = {
@@ -126,6 +130,12 @@ class DanmakuOrchestrator:
             logger.info("使用Mock连接器（测试模式）")
             self.connector = DouyinConnectorMock(self.room_id, self.ttwid)
             self.parser = MessageParser()
+        elif self.use_http:
+            logger.info("使用HTTP轮询连接器...")
+            logger.info("  提示: 需要Chrome在调试模式下运行")
+            logger.info("  启动命令: chrome.exe --remote-debugging-port=9222")
+            self.connector = DouyinHTTPConnector(self.room_id, self.ttwid)
+            self.parser = MessageParser()  # 使用普通解析器
         elif self.use_real:
             logger.info("使用真实连接器（Playwright）")
             logger.info("  提示: 需要Chrome在调试模式下运行")
@@ -225,13 +235,18 @@ class DanmakuOrchestrator:
                 logger.error("连接直播间失败")
                 if self.use_mock:
                     logger.info("提示：Mock模式已启用")
+                elif self.use_http:
+                    logger.info("提示：HTTP连接失败，请检查:")
+                    logger.info("  1. Chrome是否在调试模式下运行？")
+                    logger.info("  2. 启动命令: chrome.exe --remote-debugging-port=9222")
                 elif self.use_real:
                     logger.info("提示：真实连接失败，请检查:")
                     logger.info("  1. Chrome是否在调试模式下运行？")
                     logger.info("  2. 启动命令: chrome.exe --remote-debugging-port=9222")
                 else:
-                    logger.info("提示：可以使用 --mock 或 --real 参数")
+                    logger.info("提示：可以使用 --mock、--http 或 --real 参数")
                     logger.info("  --mock: Mock模式（不需要Chrome）")
+                    logger.info("  --http: HTTP轮询模式（需要Chrome调试模式）")
                     logger.info("  --real: 真实模式（需要Chrome调试模式）")
                 return False
 
@@ -293,12 +308,13 @@ def parse_arguments():
 示例:
   python main.py 728804746624
   python main.py 728804746624 --mock      # 使用Mock模式
-  python main.py 728804746624 --real       # 使用真实连接（需要Chrome调试模式）
+  python main.py 728804746624 --http      # 使用HTTP轮询（推荐，需要Chrome调试模式）
+  python main.py 728804746624 --real      # 使用真实连接（需要Chrome调试模式）
   python main.py 728804746624 --debug
   python main.py 728804746624 --config custom.ini
 
 注意：
-  --real 模式需要Chrome在调试模式下运行:
+  --http 和 --real 模式需要Chrome在调试模式下运行:
   启动命令: chrome.exe --remote-debugging-port=9222
         """
     )
@@ -318,6 +334,12 @@ def parse_arguments():
         "--real",
         action="store_true",
         help="使用真实连接器（需要Chrome调试模式）"
+    )
+
+    parser.add_argument(
+        "--http",
+        action="store_true",
+        help="使用HTTP轮询连接器（需要Chrome调试模式）"
     )
 
     parser.add_argument(
@@ -389,7 +411,8 @@ async def main_async():
         room_id=args.room_id,
         config_path=args.config,
         use_mock=args.mock,
-        use_real=args.real
+        use_real=args.real,
+        use_http=args.http
     )
 
     # 初始化

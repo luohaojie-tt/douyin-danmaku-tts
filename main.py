@@ -67,6 +67,7 @@ class DanmakuOrchestrator:
         self.use_mock = use_mock
         self.use_real = use_real
         self.use_http = use_http
+        self.use_ws = use_ws
 
         # 统计信息
         self.stats = {

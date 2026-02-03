@@ -1,0 +1,13 @@
+# 抖音直播间 Cookie 配置
+#
+# 请按以下步骤获取 ttwid:
+# 1. 打开浏览器访问 https://live.douyin.com
+# 2. 按 F12 打开开发者工具
+# 3. 切换到 Application / 存储 标签
+# 4. 在左侧找到 Cookies → https://live.douyin.com
+# 5. 找到名为 ttwid 的 Cookie
+# 6. 复制 ttwid 的值
+# 7. 将下面的 "YOUR_TTWID_HERE" 替换为你的 ttwid 值
+# 8. 重命名此文件为 cookies.txt
+
+ttwid=YOUR_TTWID_HERE

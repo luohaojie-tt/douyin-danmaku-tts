@@ -48,3 +48,7 @@ pace_data_full.json
 
 # Playwright
 ms-playwright/
+
+# 测试脚本（保留test_http_connector.py用于演示）
+test_*.py
+!test_http_connector.py

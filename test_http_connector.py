@@ -56,7 +56,6 @@ async def test_http_connector():
         return False
 
     logger.info("连接成功！")
-    logger.info(f"内部room_id: {connector.internal_room_id}")
 
     # 监听消息（测试10秒）
     logger.info("\n步骤2: 监听弹幕消息（10秒）...")

@@ -200,10 +200,16 @@ class DanmakuOrchestrator:
             user_name = parsed.user.nickname if parsed.user else "用户"
             content = parsed.content
 
-            logger.info(f"[{user_name}]: {content}")
+            # ========== 打印弹幕内容（醒目显示）==========
+            print()
+            print("=" * 60)
+            print(f"📺 弹幕: [{user_name}]")
+            print(f"💬 内容: {content}")
+            print("=" * 60)
+            print()
 
             # 3. 转换为语音
-            logger.debug("开始转换语音...")
+            logger.info(f"正在转换语音: {content}")
             audio_path = await self.tts.convert_with_cache(
                 text=content,
                 cache_dir=Path("cache")

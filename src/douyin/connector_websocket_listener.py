@@ -92,6 +92,7 @@ class WebSocketListenerConnector:
             # ========== 关键：注入WebSocket监听代码 ==========
             await self.page.add_init_script("""
             window.douyinMessages = [];
+            window.wsMessageCount = 0;
 
             // 保存原始WebSocket
             const OriginalWebSocket = window.WebSocket;
@@ -100,8 +101,16 @@ class WebSocketListenerConnector:
             window.WebSocket = function(...args) {
                 const ws = new OriginalWebSocket(...args);
 
+                console.log('[WebSocket] 创建新连接:', args[0]);
+
                 ws.addEventListener('message', (event) => {
                     const data = event.data;
+                    window.wsMessageCount++;
+
+                    // 每100条消息打印一次统计
+                    if (window.wsMessageCount % 100 === 0) {
+                        console.log('[WebSocket] 已接收', window.wsMessageCount, '条消息');
+                    }
 
                     // 检查是否是二进制消息
                     if (data instanceof ArrayBuffer || data instanceof Buffer) {
@@ -118,7 +127,7 @@ class WebSocketListenerConnector:
                                 text.includes('chatmessage') ||
                                 text.includes('content')) {
 
-                                // 提取弹幕内容
+                                // 提取弹幕内容（使用更宽松的模式）
                                 const contentMatch = text.match(/content[^a-zA-Z0-9]{0,}([\u4e00-\u9fff\u0020-\u007e]{2,})/);
                                 const nicknameMatch = text.match(/nickname[^a-zA-Z0-9]{0,}([\u4e00-\u9fff]{2,})/);
 
@@ -170,6 +179,7 @@ class WebSocketListenerConnector:
 
     async def _extract_messages(self):
         """定期从页面提取消息"""
+        consecutive_empty = 0
         while self.is_running:
             try:
                 # 从页面提取收集到的消息
@@ -183,11 +193,17 @@ class WebSocketListenerConnector:
                 }''')
 
                 if messages:
+                    consecutive_empty = 0
+                    logger.debug(f"[调试] 从页面提取到 {len(messages)} 条原始消息")
+
                     for msg in messages:
                         self.stats["received"] += 1
 
                         content = msg.get('content', '').strip()
                         nickname = msg.get('nickname', '用户')
+                        raw = msg.get('raw', '')
+
+                        logger.debug(f"[调试] 消息内容: {content}, 昵称: {nickname}")
 
                         # 过滤系统消息
                         if self._is_valid_danmaku(content):
@@ -206,6 +222,12 @@ class WebSocketListenerConnector:
 
                             await self.message_queue.put(parsed)
                             logger.info(f"[收到] {nickname}: {content}")
+                        else:
+                            logger.debug(f"[过滤] 跳过非弹幕内容: {content}")
+                else:
+                    consecutive_empty += 1
+                    if consecutive_empty % 10 == 0:  # 每10秒打印一次
+                        logger.debug(f"[调试] 暂无消息，已等待 {consecutive_empty} 秒")
 
             except Exception as e:
                 logger.debug(f"提取消息失败: {e}")

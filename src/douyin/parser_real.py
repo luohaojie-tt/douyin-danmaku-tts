@@ -35,6 +35,9 @@ class ParsedMessage:
     # 原始数据
     raw_data: Optional[bytes] = None
 
+    # 提取的所有字符串（用于调试Unknown消息）
+    raw_strings: Optional[List[dict]] = None
+
 
 class RealtimeMessageParser:
     """
@@ -76,18 +79,29 @@ class RealtimeMessageParser:
             # 分析消息类型
             message_type = self._detect_message_type(strings)
 
+            logger.debug(f"[Parser] 消息类型: {message_type}, 提取到 {len(strings)} 个字符串")
+
             # 如果是聊天消息，提取弹幕
             if message_type == "WebcastChatMessage":
                 danmaku = self._extract_danmaku(strings)
                 if danmaku:
                     self.danmaku_count += 1
+                    danmaku.raw_strings = strings  # 保存字符串用于调试
+                    logger.info(f"[Parser] *** 提取到弹幕: {danmaku.content[:50]} ***")
                     return danmaku
 
             # 对于其他消息类型，也可以返回（用于调试）
-            return ParsedMessage(
+            result = ParsedMessage(
                 method=message_type,
-                raw_data=raw_data
+                raw_data=raw_data,
+                raw_strings=strings if strings else None  # 保存提取的字符串用于调试
             )
+
+            # 如果是Unknown且没有字符串，记录警告
+            if message_type == "Unknown" and not strings:
+                logger.debug(f"[Parser] Unknown消息但没有提取到字符串")
+
+            return result
 
         except Exception as e:
             logger.debug(f"解析消息失败: {e}")

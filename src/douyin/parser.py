@@ -5,13 +5,10 @@
 """
 
 import gzip
-import json
 import logging
-import struct
+import re
 from dataclasses import dataclass
 from typing import Optional, Any
-
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

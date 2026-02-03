@@ -5,17 +5,16 @@
 """
 
 import asyncio
-import gzip
 import hashlib
 import json
 import logging
 import random
 import re
 import string
-from urllib.parse import urlencode
+from collections import Counter
+from pathlib import Path
 from typing import Optional
 
-import aiohttp
 import websockets
 
 logger = logging.getLogger(__name__)
@@ -381,46 +380,6 @@ class DouyinConnectorV2:
             "version_code": self.VERSION_CODE,
             "webcast_sdk_version": self.VERSION,
             "X-MS-STUB": signature,  # 同时添加X-MS-STUB
-        }
-
-        # 构造URL
-        query_string = urlencode(params)
-        return f"{self.BASE_URL}?{query_string}"
-
-        # 构造参数
-        params = {
-            "aid": self.AID,
-            "app_name": "douyin_web",
-            "browser_language": "zh-CN",
-            "browser_name": "Mozilla",
-            "browser_online": "true",
-            "browser_platform": "Win32",
-            "browser_version": self.USER_AGENT,
-            "compress": "gzip",
-            "cookie_enabled": "true",
-            "cursor": self.cursor,
-            "device_platform": "web",
-            "did_rule": "3",
-            "endpoint": "live_pc",
-            "heartbeatDuration": "0",
-            "host": "https://live.douyin.com",
-            "identity": "audience",
-            "internal_ext": self.internal_ext,
-            "live_id": "1",
-            "live_reason": "",
-            "need_persist_msg_count": "15",
-            "room_id": self.real_room_id,
-            "screen_height": "1080",
-            "screen_width": "1920",
-            "signature": "",  # 简化版不使用真实signature
-            "support_wrds": "1",
-            "tz_name": "Asia/Shanghai",
-            "update_version_code": self.VERSION,
-            "user_unique_id": self.unique_id,
-            "version_code": self.VERSION_CODE,
-            "webcast_sdk_version": self.VERSION,
-            # 添加X-MS-STUB
-            "X-MS-STUB": x_ms_stub,
         }
 
         # 构造URL

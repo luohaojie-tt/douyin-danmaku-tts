@@ -10,7 +10,7 @@
 import asyncio
 import gzip
 import logging
-from typing import Callable, Optional, List
+from typing import Callable, Optional
 from playwright.async_api import async_playwright
 import websockets
 

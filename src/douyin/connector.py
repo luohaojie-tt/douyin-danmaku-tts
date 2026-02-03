@@ -8,13 +8,9 @@
 
 import asyncio
 import gzip
-import json
 import logging
-import struct
 from typing import Callable, Optional
-from pathlib import Path
 
-import aiohttp
 import websockets
 
 logger = logging.getLogger(__name__)

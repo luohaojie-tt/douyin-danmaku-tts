@@ -6,9 +6,9 @@
 
 import gzip
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional, List
-import re
 
 logger = logging.getLogger(__name__)
 

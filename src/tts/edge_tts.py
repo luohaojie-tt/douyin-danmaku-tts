@@ -4,7 +4,7 @@ Edge-TTS 文字转语音引擎
 封装 Microsoft Edge Text-to-Speech API，提供异步文字转语音功能。
 """
 
-import asyncio
+import hashlib
 import logging
 from pathlib import Path
 from typing import Optional

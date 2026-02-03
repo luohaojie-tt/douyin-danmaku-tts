@@ -6,11 +6,8 @@
 
 import asyncio
 import gzip
-import json
 import logging
-import subprocess
 from typing import Callable, Optional
-from pathlib import Path
 
 from playwright.async_api import async_playwright
 import websockets

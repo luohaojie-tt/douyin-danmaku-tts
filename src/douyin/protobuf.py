@@ -4,11 +4,10 @@
 参考: dycast/src/core/model.ts
 """
 
-import struct
 import gzip
 import logging
-from typing import Optional, Dict, Any
 from dataclasses import dataclass
+from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 

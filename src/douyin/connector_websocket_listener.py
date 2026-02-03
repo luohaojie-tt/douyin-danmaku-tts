@@ -7,9 +7,8 @@ WebSocket监听连接器 - 直接监听浏览器WebSocket消息
 
 import asyncio
 import logging
-import json
-from typing import Callable, Optional
 from dataclasses import dataclass
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 

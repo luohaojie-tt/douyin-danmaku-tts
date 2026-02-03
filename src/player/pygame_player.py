@@ -5,7 +5,6 @@ Pygame 音频播放器
 """
 
 import logging
-import threading
 import time
 from pathlib import Path
 from typing import Optional

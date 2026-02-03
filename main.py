@@ -222,10 +222,22 @@ class DanmakuOrchestrator:
 
             # 3. 转换为语音
             logger.info(f"正在转换语音: {content}")
-            audio_path = await self.tts.convert_with_cache(
-                text=content,
-                cache_dir=Path("cache")
-            )
+
+            try:
+                # 添加超时保护，避免TTS转换阻塞太久
+                audio_path = await asyncio.wait_for(
+                    self.tts.convert_with_cache(
+                        text=content,
+                        cache_dir=Path("cache")
+                    ),
+                    timeout=10.0  # 最多等待10秒
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"TTS转换超时（10秒），跳过: {content}")
+                return
+            except Exception as e:
+                logger.warning(f"TTS转换失败: {e}，跳过: {content}")
+                return
 
             if not audio_path:
                 logger.warning("语音转换失败，跳过播放")

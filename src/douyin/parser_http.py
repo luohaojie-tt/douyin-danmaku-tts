@@ -305,9 +305,43 @@ class HTTPResponseParser:
         if text.startswith('#') and len(text) in [7, 9]:
             return False
 
+        # 过滤系统消息和排行榜消息
+        system_keywords = [
+            '榜', '第', '名', '贡献', '热度', '人气',
+            '主播', '欢迎', '进入', '直播间', '关注',
+            '礼物', '感谢', '送出', '点赞', '分享',
+            'join', 'room', 'gift', 'like', 'follow'
+        ]
+
+        text_lower = text.lower()
+        for keyword in system_keywords:
+            if keyword in text or keyword in text_lower:
+                # 允许某些特殊情况
+                # 比如"欢迎"单独出现可以过滤，但"欢迎你"这种用户消息应该保留
+                if keyword == '欢迎' and len(text) > 4:
+                    continue
+                if keyword == '主播' and '赞' in text:
+                    continue  # "赞主播"这种可以保留
+                return False
+
         # 必须包含中文
         has_chinese = any('\u4e00' <= c <= '\u9fff' for c in text)
-        return has_chinese
+        if not has_chinese:
+            return False
+
+        # 过滤纯数字或特殊字符
+        if len(text.strip('0123456789')) == 0:
+            return False
+
+        # 过滤太短的内容（2个字以下）
+        if len(text) < 2:
+            return False
+
+        # 过滤重复字符（比如"哈哈哈"可以，但"啊啊啊啊啊啊"太长不行）
+        if len(set(text)) < 2 and len(text) > 5:
+            return False
+
+        return True
 
     def _read_varint(self, data: bytes, pos: int) -> tuple[int, int]:
         """

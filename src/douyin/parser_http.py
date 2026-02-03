@@ -136,10 +136,27 @@ class HTTPResponseParser:
             r'^gift',
             r'^like',
             r'^follow',
+            r'^勋章',          # 用户等级标识
+            r'勋章',           # 包含勋章的内容
+            r'^新来的',        # 系统提示
+            r'^加入大家',      # 系统提示
+            r'^等级',          # 用户等级
+            r'^粉丝团',        # 粉丝团相关
+            r'^舰长',          # 等级标识
+            r'^提督',          # 等级标识
+            r'^总督',          # 等级标识
+            r'^连击',          # 礼物连击
+            r'^赠送',          # 赠送礼物
+            r'^送到',          # 送到
+            r'^开团',          # 开团
+            r'^报名',          # 报名
+            r'^抢购',          # 抢购
+            r'^秒杀',          # 秒杀
+            r'^优惠券',        # 优惠券
         ]
 
         for pattern in system_patterns:
-            if re.match(pattern, text):
+            if re.search(pattern, text):
                 return False
 
         # 必须是纯中文或常见标点

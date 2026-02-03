@@ -1,16 +1,16 @@
 # 抖音弹幕语音播报工具
 
-一个**极简的Python命令行工具**，用于实时捕获抖音直播间的弹幕，并转换成语音播放。
+实时提取抖音直播间弹幕，并使用 Microsoft Edge TTS 转换为语音播放。
 
-**核心价值**：解放双眼，用耳朵听弹幕。
+## 功能特性
 
-## 特性
-
-- ✅ **单机运行**：无需服务器，本地Python脚本
-- ✅ **开箱即用**：配置一次，永久使用
-- ✅ **轻量级**：核心代码 < 1000行
-- ✅ **免费**：使用免费的Edge-TTS
-- ✅ **实时性**：弹幕延迟 < 2秒
+- ✅ **实时弹幕提取** - 支持多种连接方式（WebSocket、HTTP轮询、浏览器监听）
+- ✅ **智能消息过滤** - 自动过滤系统消息，只保留真实用户弹幕
+- ✅ **完整句子播放** - 确保一条弹幕完整播放，不会被拆分
+- ✅ **顺序不中断播放** - 弹幕按顺序排队播放，不会相互打断
+- ✅ **语音缓存** - 相同内容复用音频文件，提升性能
+- ✅ **多种音色支持** - 支持所有 Edge TTS 音色
+- ✅ **可配置参数** - 语速、音量、音色均可自定义
 
 ## 快速开始
 
@@ -20,101 +20,175 @@
 pip install -r requirements.txt
 ```
 
-### 2. 配置Cookie
+### 2. 获取 Cookie
 
-1. 打开浏览器访问 https://live.douyin.com
-2. 按F12打开开发者工具
-3. Application → Cookies → 复制 `ttwid` 的值
-4. 将值粘贴到 `cookies.txt` 文件中
+1. 打开浏览器访问抖音直播间
+2. 打开开发者工具 (F12) → Application → Cookies
+3. 找到 `ttwid` cookie，复制其值
+4. 将值保存到项目根目录的 `cookies.txt` 文件中
 
-### 3. 运行程序
+### 3. 启动 Chrome（调试模式）
 
 ```bash
-python main.py <room_id>
+# Windows
+chrome.exe --remote-debugging-port=9222
+
+# Linux
+google-chrome --remote-debugging-port=9222
+
+# macOS
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
 ```
 
-例如：
+### 4. 运行程序
+
 ```bash
-python main.py 728804746624
+# 使用 WebSocket 监听模式（推荐）
+python main.py <直播间ID> --ws
+
+# 使用 HTTP 轮询模式
+python main.py <直播间ID> --http
+
+# 使用 Mock 模式（测试）
+python main.py <直播间ID> --mock
+
+# 启用调试日志
+python main.py <直播间ID> --ws --debug
+```
+
+## 获取直播间 ID
+
+### 方法1：从 URL 获取
+
+直播间的 URL 格式为：
+```
+https://live.douyin.com/123456789
+```
+
+最后面的数字部分就是直播间 ID（如：`123456789`）
+
+### 方法2：使用工具脚本
+
+```bash
+python tools/get_room_id.py
 ```
 
 ## 配置说明
 
-编辑 `config.ini` 文件可以自定义以下设置：
+### 命令行参数
 
-### 直播间配置
-```ini
-[room]
-room_id = 728804746624          # 房间ID
-cookie_file = cookies.txt        # Cookie文件
-auto_reconnect = true           # 自动重连
-```
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `room_id` | 直播间房间ID（必需） | - |
+| `--ws` | 使用WebSocket监听模式（推荐） | 否 |
+| `--http` | 使用HTTP轮询模式 | 否 |
+| `--real` | 使用Playwright真实连接模式 | 否 |
+| `--mock` | 使用Mock测试模式 | 否 |
+| `--debug` | 启用调试日志 | 否 |
+| `--config` | 配置文件路径 | config.ini |
+| `--voice` | TTS音色 | zh-CN-XiaoxiaoNeural |
+| `--rate` | TTS语速 | +0% |
+| `--volume` | 播放音量 (0.0-1.0) | 0.7 |
 
-### 语音配置
+### 配置文件 (config.ini)
+
 ```ini
 [tts]
-voice = zh-CN-XiaoxiaoNeural    # 音色
-rate = +0%                      # 语速
-volume = +0%                    # 音量
-cache_enabled = true            # 启用缓存
+voice = zh-CN-XiaoxiaoNeural
+rate = +0%
+volume = +0%
+
+[playback]
+volume = 0.7
 ```
-
-### 过滤规则
-```ini
-[filter]
-min_length = 1                  # 最小长度
-max_length = 100                # 最大长度
-blocked = 垃圾,广告,刷屏         # 屏蔽关键词
-```
-
-## 系统要求
-
-- **操作系统**：Windows 10/11, macOS 11+, Linux (Ubuntu 20.04+)
-- **Python版本**：Python 3.11 或更高
-- **硬件**：CPU双核及以上，内存2GB+
-- **网络**：稳定的互联网连接
 
 ## 项目结构
 
 ```
 LiveStreamInfoRetrievalProject/
-├── main.py                 # 程序入口
-├── config.ini              # 配置文件
-├── requirements.txt        # 依赖包
-├── cookies.txt            # Cookie配置
+├── main.py                      # 主程序入口
+├── config.ini                   # 配置文件
+├── cookies.txt                  # Cookie文件
+├── cache/                       # TTS音频缓存
 │
-├── src/                   # 源代码
-│   ├── config/           # 配置管理
-│   ├── douyin/           # 抖音连接
-│   ├── tts/              # 文字转语音
-│   ├── player/           # 音频播放
-│   ├── filter/           # 弹幕过滤
-│   └── utils/            # 工具函数
+├── codemaps/                    # 代码映射文档
+│   ├── architecture.md          # 系统架构
+│   ├── backend.md               # 后端实现
+│   ├── frontend.md              # CLI接口
+│   └── data.md                  # 数据结构
 │
-├── tests/                # 测试代码
-├── cache/                # 音频缓存
-└── logs/                 # 日志文件
+├── src/
+│   ├── config/                  # 配置管理
+│   ├── douyin/                  # 抖音模块
+│   │   ├── connector_*.py       # 各种连接器实现
+│   │   └── parser_*.py          # 各种解析器实现
+│   ├── tts/                     # 文字转语音
+│   │   └── edge_tts.py
+│   └── player/                  # 音频播放
+│       └── pygame_player.py
+│
+└── tools/                       # 工具脚本
 ```
 
-## 开发状态
+## 连接器对比
 
-当前版本：v0.1.0（开发中）
+| 连接器 | 模式 | Chrome必需 | 稳定性 | 推荐度 |
+|--------|------|-----------|--------|--------|
+| WebSocketListenerConnector | 浏览器WS监听 | ✅ | ⭐⭐⭐⭐⭐ | 最推荐 |
+| DouyinHTTPConnector | HTTP轮询 | ✅ | ⭐⭐⭐⭐ | 推荐 |
+| DouyinConnectorReal | Playwright | ✅ | ⭐⭐⭐⭐ | 推荐 |
+| DouyinConnector | 标准WS | ❌ | ⭐⭐⭐ | 备选 |
+| DouyinConnectorMock | Mock测试 | ❌ | ⭐⭐⭐ | 测试用 |
 
-- [x] 项目架构设计
-- [x] 实施计划制定
-- [ ] 核心功能开发
-- [ ] 测试和优化
+## 技术栈
 
-## 文档
+- **Python 3.8+**
+- **websockets** - WebSocket 协议支持
+- **playwright** - 浏览器自动化
+- **edge-tts** - Microsoft Edge 文字转语音
+- **pygame-ce** - 音频播放
+- **protobuf** - Protocol Buffers 解码
 
-- [架构设计文档](ARCHITECTURE.md) - v2.1.0
-- [实施计划文档](IMPLEMENTATION_PLAN.md) - v1.3
-- [开发日志](DEVELOPMENT_LOG.md)
+## 开发说明
+
+### 添加新的连接器
+
+1. 在 `src/douyin/` 创建 `connector_<name>.py`
+2. 实现接口：`connect()`, `listen()`, `disconnect()`
+3. 在 `main.py` 中添加命令行参数
+4. 更新文档
+
+### 添加新的解析器
+
+1. 在 `src/douyin/` 创建 `parser_<name>.py`
+2. 解析为 `ParsedMessage` 格式
+3. 在连接器中集成
+4. 更新文档
+
+## 常见问题
+
+### Q: 找不到 ttwid？
+A: 确保已在 Chrome 中登录抖音账号，然后在开发者工具中查找 Cookie。
+
+### Q: 连接失败？
+A: 检查 Chrome 是否在调试模式下运行（`--remote-debugging-port=9222`）
+
+### Q: 没有声音？
+A: 检查系统音量和配置文件中的音量设置。
+
+### Q: 弹幕被拆分成多条？
+A: 已在最新版本中修复，确保使用最新代码。
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
 
 ## 许可证
 
 MIT License
 
-## 联系方式
+## 致谢
 
-项目地址：[GitHub](https://github.com/your-repo/LiveStreamInfoRetrievalProject)
+- [edge-tts](https://github.com/rany2/edge-tts) - Microsoft Edge TTS 引擎
+- [pygame-ce](https://github.com/pygame-community/pygame-ce) - 音频播放库
+- [playwright](https://playwright.dev/) - 浏览器自动化

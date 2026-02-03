@@ -1,24 +1,31 @@
+# 敏感信息
+cookies.txt
+*.cookie
+
+# 临时数据文件
+*.raw
+captured_requests.json
+current_room_id.txt
+danmaku_extracted.txt
+
+# 保留重要文档
+!README.md
+!HTTP_BREAKTHROUGH.md
+!IMPLEMENTATION_PLAN.md
+!DEVELOPMENT_LOG.md
+!ARCHITECTURE.md
+!requirements.txt
+
+# 截图
+Snipaste_*.png
+*.png
+!docs/images/*.png
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
 # Virtual Environment
 venv/
@@ -30,56 +37,14 @@ env/
 .idea/
 *.swp
 *.swo
-*~
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
+# OS
+.DS_Store
+Thumbs.db
 
-# Temporary files
-*.log
-*.tmp
-*.temp
-message_*.txt
-chat_danmaku.txt
-real_danmaku.txt
-chinese_strings.txt
-danmaku_candidates.txt
-websocket_url.txt
-valid_websocket_urls.txt
-
-# Debug outputs
-debug_*.py
-debug_*.html
-debug_*.png
-*_screenshot.png
-*_extraction.png
-signature_extraction.png
-websocket_captured.png
-live_status_check.png
+# 临时文件
+nul
+pace_data_full.json
 
 # Playwright
-playwright-report/
-playwright/.cache/
-
-# Chrome
-chrome_debug_profile/
-C:/chrome_debug_profile/
-
-# Claude
-.claude/
-
-# Node modules (for signature.js)
-node_modules/
-
-# Output files
-*.wav
-*.mp3
-*.ogg
-audio_cache/
-
-# Test outputs
-test_output/
-temp/
+ms-playwright/

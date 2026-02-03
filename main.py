@@ -201,12 +201,24 @@ class DanmakuOrchestrator:
             content = parsed.content
 
             # ========== 打印弹幕内容（醒目显示）==========
-            print()
-            print("=" * 60)
-            print(f"📺 弹幕: [{user_name}]")
-            print(f"💬 内容: {content}")
-            print("=" * 60)
-            print()
+            # 使用UTF-8编码避免emoji报错
+            import sys
+            if sys.platform == 'win32':
+                # Windows环境，使用简单的ASCII符号
+                print()
+                print("=" * 60)
+                print(f"[弹幕] {user_name}")
+                print(f"[内容] {content}")
+                print("=" * 60)
+                print()
+            else:
+                # 非Windows环境，可以使用emoji
+                print()
+                print("=" * 60)
+                print(f"📺 弹幕: [{user_name}]")
+                print(f"💬 内容: {content}")
+                print("=" * 60)
+                print()
 
             # 3. 转换为语音
             logger.info(f"正在转换语音: {content}")

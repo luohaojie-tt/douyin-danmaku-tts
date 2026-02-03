@@ -51,12 +51,12 @@ class HTTPResponseParser:
             messages = []
 
             # WebcastChatMessage的文本模式
-            # 查找所有可能的消息模式
+            # 使用原来的模式，但要求至少8个字符以避免拆分长句子
             patterns = [
-                # 尝试找到content字段后面的文本
-                r'WebcastChatMessage.*?content[^\x00-\x7f]{4,}([^\x00-\x7f]{2,})',
-                # 或者查找连续的中文文本
-                r'([\u4e00-\u9fff]{2,}[！？！，。、～\s]{0,3})',
+                # 尝试找到content字段后面的文本（至少8个非ASCII字符，保持长句完整）
+                r'WebcastChatMessage.*?content[^\x00-\x7f]{4,}([^\x00-\x7f]{8,})',
+                # 或者查找连续的中文文本（作为备选）
+                r'([\u4e00-\u9fff\u0020-\u007e]{5,}[！？！，。、～]{0,2})',
             ]
 
             for pattern in patterns:

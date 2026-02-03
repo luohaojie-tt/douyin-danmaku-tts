@@ -159,13 +159,15 @@ class DanmakuOrchestrator:
         流程: 解析 → TTS → 播放
 
         Args:
-            raw_message: 原始消息（字典或二进制）
+            raw_message: 原始消息（字典或二进制或ParsedMessage）
         """
         try:
-            self.stats["messages_received"] += 1
+            # 如果是ParsedMessage，直接使用
+            from src.douyin.parser_http import ParsedMessage
 
-            # 1. 解析消息
-            if isinstance(raw_message, dict):
+            if isinstance(raw_message, ParsedMessage):
+                parsed = raw_message
+            elif isinstance(raw_message, dict):
                 # Mock连接器返回的是字典格式
                 parsed = self.parser.parse_test_message(raw_message)
             elif isinstance(raw_message, bytes):
@@ -182,6 +184,7 @@ class DanmakuOrchestrator:
                 logger.debug("消息解析失败，跳过")
                 return
 
+            self.stats["messages_received"] += 1
             logger.info(f"收到消息: {parsed.method}")
 
             # 只处理聊天消息

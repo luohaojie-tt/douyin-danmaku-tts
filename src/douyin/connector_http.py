@@ -8,22 +8,9 @@ import logging
 import aiohttp
 from typing import Callable, Optional
 from urllib.parse import urlencode
+from .parser_http import HTTPResponseParser, ParsedMessage
 
 logger = logging.getLogger(__name__)
-
-
-def read_varint(data, pos):
-    """读取varint"""
-    result = 0
-    shift = 0
-    while pos < len(data):
-        byte = data[pos]
-        pos += 1
-        result |= (byte & 0x7F) << shift
-        if not (byte & 0x80):
-            break
-        shift += 7
-    return result, pos
 
 
 class DouyinHTTPConnector:
@@ -54,6 +41,9 @@ class DouyinHTTPConnector:
 
         # 用户唯一ID
         self.user_unique_id: Optional[str] = None
+
+        # HTTP响应解析器
+        self.parser = HTTPResponseParser()
 
     async def connect(self) -> bool:
         """建立连接 - 获取内部room_id"""
@@ -251,10 +241,15 @@ class DouyinHTTPConnector:
                 # 处理每条消息
                 for raw_message in messages:
                     try:
-                        if asyncio.iscoroutinefunction(message_handler):
-                            await message_handler(raw_message)
-                        else:
-                            message_handler(raw_message)
+                        # 解析HTTP响应中的消息
+                        parsed_messages = self.parser.parse_response(raw_message)
+
+                        for parsed in parsed_messages:
+                            if asyncio.iscoroutinefunction(message_handler):
+                                await message_handler(parsed)
+                            else:
+                                message_handler(parsed)
+
                     except Exception as e:
                         logger.error(f"处理消息失败: {e}")
 

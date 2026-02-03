@@ -165,6 +165,9 @@ class DanmakuOrchestrator:
         logger.info("初始化完成")
         logger.info("="*60)
 
+        # 设置运行标志（必须在启动播放任务之前）
+        self.is_running = True
+
         # 启动播放队列工作线程
         self.play_task = asyncio.create_task(self._play_queue_worker())
 
@@ -280,11 +283,8 @@ class DanmakuOrchestrator:
         try:
             while self.is_running:
                 try:
-                    # 从队列获取待播放的音频（带超时，避免永久阻塞）
-                    play_item = await asyncio.wait_for(
-                        self.play_queue.get(),
-                        timeout=1.0
-                    )
+                    # 从队列获取待播放的音频
+                    play_item = await self.play_queue.get()
 
                     audio_path = play_item['audio_path']
                     content = play_item['content']
@@ -299,9 +299,6 @@ class DanmakuOrchestrator:
                     # 标记队列任务完成
                     self.play_queue.task_done()
 
-                except asyncio.TimeoutError:
-                    # 超时继续循环
-                    continue
                 except Exception as e:
                     logger.error(f"播放队列处理失败: {e}")
                     self.stats["errors"] += 1

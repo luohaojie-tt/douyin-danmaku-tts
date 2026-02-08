@@ -74,7 +74,13 @@ class WebSocketListenerConnector:
             logger.info("连接Chrome...")
             self.browser = await self.playwright.chromium.connect_over_cdp("http://localhost:9222")
 
-            # 创建context
+            # 获取所有已存在的context
+            contexts = self.browser.contexts
+            logger.info(f"发现 {len(contexts)} 个浏览器上下文")
+
+            # 关键：必须创建新的context，不能使用已存在的！
+            # 已存在的context中WebSocket可能已经建立，无法被我们的代码拦截
+            logger.info("创建新的浏览器上下文（用于注入WebSocket监听）")
             self.context = await self.browser.new_context()
 
             # 设置cookie
@@ -85,81 +91,184 @@ class WebSocketListenerConnector:
                 'path': '/'
             }])
 
-            # 创建页面
+            # ========== 新方法：使用DOM监听获取弹幕（最可靠） ==========
+
+            # 存储消息的列表
+            self.cdp_messages = []
+            self.dom_message_count = 0
+
+            # 创建新页面
+            logger.info("创建新页面")
             self.page = await self.context.new_page()
 
-            # ========== 关键：注入WebSocket监听代码 ==========
-            await self.page.add_init_script("""
+            # 注入DOM监听脚本
+            logger.info("注入DOM弹幕监听脚本")
+            await self.context.add_init_script("""
             window.douyinMessages = [];
-            window.wsMessageCount = 0;
+            window.domMessageCount = 0;
+            window.seenTexts = new Set();
+            window.lastScanTime = Date.now();
 
-            // 保存原始WebSocket
-            const OriginalWebSocket = window.WebSocket;
+            // 定期扫描页面中的弹幕元素（更可靠）
+            function scanDanmaku() {
+                try {
+                    // 获取所有文本节点
+                    const walker = document.createTreeWalker(
+                        document.body,
+                        NodeFilter.SHOW_TEXT,
+                        null,
+                        false
+                    );
 
-            // 重写WebSocket
-            window.WebSocket = function(...args) {
-                const ws = new OriginalWebSocket(...args);
+                    let node;
+                    const newMessages = [];
 
-                console.log('[WebSocket] 创建新连接:', args[0]);
+                    while(node = walker.nextNode()) {
+                        const text = node.textContent || '';
 
-                ws.addEventListener('message', (event) => {
-                    const data = event.data;
-                    window.wsMessageCount++;
+                        // 过滤条件
+                        if (text.length >= 3 && text.length <= 50) {
+                            // 检查是否包含中文
+                            if (/[\\u4e00-\\u9fff]/.test(text)) {
+                                // 排除系统消息和UI元素
+                                const systemKeywords = [
+                                    '点赞', '关注', '粉丝', '主播', '直播间', '进入', '送出', '购买了', '热榜', '在线人数',
+                                    '放映厅', '小游戏', '充钻石', '客户端', '全部商品', '下载', '加载中', '在线观众',
+                                    '退出', '开启', '关闭', '模式', '网页全屏', '小窗', '读屏标签',
+                                    '小时榜', '人气榜', '贡献用户', '高等级用户', '嘉年华', '私人飞机',
+                                    '抖音', '精选', '充值', '金币', '钻石', '账号', '登录', '注册',
+                                    '许可证', '版权', '©', 'ICP备', '京ICP备', '网文', '视听',
+                                    // 菜单项
+                                    '我的喜欢', '我的收藏', '观看历史', '稍后再看', '我的作品', '我的预约', '我的订单',
+                                    '发布视频', '视频管理', '作品数据', '开直播', '直播数据', '创作者学习中心', '创作者中心', '剪映专业版',
+                                    // 法律和备案信息
+                                    '药品', '医疗器械', '网络信息', '服务备案', '京', '网药械', '备字',
+                                    '违法', '不良信息', '举报', '算法推荐', '专项举报', '从业人员', '违法违规', '反馈',
+                                    // UI控制
+                                    '屏幕旋转', '才能开始聊天',
+                                    // 商品相关
+                                    '爆款', '支持试用', '年终收官', '购物团'
+                                ];
+                                const isSystem = systemKeywords.some(kw => text.includes(kw));
 
-                    // 每100条消息打印一次统计
-                    if (window.wsMessageCount % 100 === 0) {
-                        console.log('[WebSocket] 已接收', window.wsMessageCount, '条消息');
-                    }
+                                // 排除纯数字、带单位的数字
+                                const isNumber = /^\\d+[万千百十]+$/.test(text) || /^\\d+\\.\\d+万$/.test(text) || /^\\d+钻$/.test(text) || /^\\d+币$/.test(text);
 
-                    // 检查是否是二进制消息
-                    if (data instanceof ArrayBuffer || data instanceof Buffer) {
-                        try {
-                            // 转换为Uint8Array
-                            const bytes = new Uint8Array(data);
+                                // 排除按钮和链接
+                                const parent = node.parentElement;
+                                const isButton = parent && (parent.tagName === 'BUTTON' || parent.closest('button') || parent.tagName === 'A');
 
-                            // 尝试解码为文本
-                            const decoder = new TextDecoder('utf-8', {fatal: false});
-                            const text = decoder.decode(bytes);
+                                if (!isSystem && !isButton && !isNumber) {
+                                    // 检查是否已处理
+                                    const textKey = text.trim();
+                                    if (!window.seenTexts.has(textKey)) {
+                                        window.seenTexts.add(textKey);
 
-                            // 检查是否包含聊天消息
-                            if (text.includes('WebcastChatMessage') ||
-                                text.includes('chatmessage') ||
-                                text.includes('content')) {
+                                        // 提取昵称
+                                        let nickname = '用户';
+                                        if (parent) {
+                                            // 查找父元素的兄弟元素（可能包含用户名）
+                                            const grandParent = parent.parentElement;
+                                            if (grandParent) {
+                                                const children = Array.from(grandParent.children);
+                                                for (const child of children) {
+                                                    if (child !== parent && child.textContent && child.textContent.length < 20 && child.textContent.length >= 2) {
+                                                        const childText = child.textContent.trim();
+                                                        // 过滤系统关键词和数字
+                                                        const isChildSystem = systemKeywords.some(kw => childText.includes(kw));
+                                                        const isChildNumber = /^\\d+[万千百十]+$/.test(childText) || /^\\d+\\.\\d+万$/.test(childText) || /^\\d+钻$/.test(childText) || /^\\d+币$/.test(childText);
+                                                        if (!isChildSystem && !isChildNumber) {
+                                                            nickname = childText;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
 
-                                // 提取弹幕内容（使用更宽松的模式）
-                                const contentMatch = text.match(/content[^a-zA-Z0-9]{0,}([\u4e00-\u9fff\u0020-\u007e]{2,})/);
-                                const nicknameMatch = text.match(/nickname[^a-zA-Z0-9]{0,}([\u4e00-\u9fff]{2,})/);
+                                        newMessages.push({
+                                            content: text.trim(),
+                                            nickname: nickname,
+                                            timestamp: Date.now()
+                                        });
 
-                                if (contentMatch && contentMatch[1]) {
-                                    const content = contentMatch[1];
-                                    const nickname = nicknameMatch && nicknameMatch[1] ? nicknameMatch[1] : '用户';
-
-                                    window.douyinMessages.push({
-                                        content: content,
-                                        nickname: nickname,
-                                        raw: text.substring(0, 200) // 保存前200字符用于调试
-                                    });
-
-                                    console.log('[弹幕]', nickname, ':', content);
+                                        console.log('[DOM弹幕]', nickname, ':', text.trim());
+                                    }
                                 }
                             }
-                        } catch (e) {
-                            console.error('[解析失败]', e);
                         }
                     }
-                });
 
-                return ws;
-            };
+                    // 添加到全局消息列表
+                    if (newMessages.length > 0) {
+                        window.douyinMessages.push(...newMessages);
+                        window.domMessageCount += newMessages.length;
+                    }
+                } catch(e) {
+                    console.error('[扫描失败]', e);
+                }
+            }
+
+            // 每秒扫描一次
+            setInterval(scanDanmaku, 1000);
+
+            console.log('[初始化] DOM弹幕监听器已启动（定期扫描模式）');
             """)
+            logger.info("✓ DOM监听脚本已注入")
 
-            # 访问直播间
+            # 导航到直播间
             url = f"https://live.douyin.com/{self.room_id}"
-            logger.info(f"访问直播间: {url}")
-            await self.page.goto(url, wait_until='domcontentloaded', timeout=30000)
+            logger.info(f"导航到直播间: {url}")
 
-            # 等待页面加载
-            await asyncio.sleep(5)
+            try:
+                await self.page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                logger.info(f"✓ 页面导航成功")
+            except Exception as e:
+                logger.error(f"✗ 页面导航失败: {e}")
+                raise
+
+            logger.info("等待页面完全加载...")
+            await asyncio.sleep(8)  # 等待页面完全加载和WebSocket连接建立
+
+            # 尝试触发页面交互，确保WebSocket建立
+            logger.info("尝试触发页面交互...")
+            try:
+                # 点击页面body，确保页面获得焦点
+                await self.page.click('body')
+                await asyncio.sleep(2)
+
+                # 尝试滚动页面
+                await self.page.evaluate('() => window.scrollBy(0, 100)')
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.warning(f"页面交互失败: {e}")
+
+            # 调试：检查页面状态
+            logger.info("=== 调试信息 ===")
+
+            # 检查init_script是否执行
+            init_check = await self.page.evaluate('''() => {
+                return {
+                    has_douyinMessages: typeof window.douyinMessages !== 'undefined',
+                    has_wsMessageCount: typeof window.wsMessageCount !== 'undefined',
+                    has_wsConnections: typeof window.wsConnections !== 'undefined',
+                    wsConnections: window.wsConnections || 0,
+                    wsMessageCount: window.wsMessageCount || 0,
+                    pageURL: window.location.href
+                };
+            }''')
+            logger.info(f"Init脚本检查: {init_check}")
+
+            # 截图保存
+            screenshot_path = "debug_page.png"
+            await self.page.screenshot(path=screenshot_path)
+            logger.info(f"页面截图已保存: {screenshot_path}")
+
+            # 获取页面标题
+            title = await self.page.title()
+            logger.info(f"页面标题: {title}")
+
+            logger.info("=== 调试信息结束 ===")
 
             # 启动消息提取任务
             asyncio.create_task(self._extract_messages())
@@ -177,11 +286,13 @@ class WebSocketListenerConnector:
             return False
 
     async def _extract_messages(self):
-        """定期从页面提取消息"""
+        """定期从页面DOM提取消息"""
         consecutive_empty = 0
+        last_dom_count = 0
+
         while self.is_running:
             try:
-                # 从页面提取收集到的消息
+                # 从页面JavaScript中获取DOM监听到的消息
                 messages = await self.page.evaluate('''() => {
                     if (!window.douyinMessages) return [];
 
@@ -191,9 +302,21 @@ class WebSocketListenerConnector:
                     return msgs;
                 }''')
 
+                # 获取DOM消息统计
+                dom_stats = await self.page.evaluate('''() => {
+                    return {
+                        count: window.domMessageCount || 0
+                    };
+                }''')
+
+                # 如果DOM消息数增加了，打印日志
+                if dom_stats['count'] > last_dom_count:
+                    logger.info(f"[DOM统计] 已捕获 {dom_stats['count']} 条弹幕")
+                    last_dom_count = dom_stats['count']
+
                 if messages:
                     consecutive_empty = 0
-                    logger.debug(f"[调试] 从页面提取到 {len(messages)} 条原始消息")
+                    logger.info(f"[调试] 从CDP提取到 {len(messages)} 条弹幕")
 
                     for msg in messages:
                         self.stats["received"] += 1
@@ -203,6 +326,7 @@ class WebSocketListenerConnector:
                         raw = msg.get('raw', '')
 
                         logger.debug(f"[调试] 消息内容: {content}, 昵称: {nickname}")
+                        logger.debug(f"[调试] 原始数据: {raw}")
 
                         # 过滤系统消息
                         if self._is_valid_danmaku(content):
@@ -225,13 +349,16 @@ class WebSocketListenerConnector:
                             logger.debug(f"[过滤] 跳过非弹幕内容: {content}")
                 else:
                     consecutive_empty += 1
-                    if consecutive_empty % 10 == 0:  # 每10秒打印一次
-                        logger.debug(f"[调试] 暂无消息，已等待 {consecutive_empty} 秒")
+                    if consecutive_empty % 10 == 0:  # 每3秒打印一次
+                        logger.info(f"[调试] 暂无弹幕，已等待 {consecutive_empty} 秒")
+                        logger.info(f"[调试] DOM统计: 已捕获 {dom_stats['count']} 条弹幕")
+                        if dom_stats['count'] == 0:
+                            logger.warning("[警告] 未检测到弹幕！请确认直播间是否有弹幕")
 
             except Exception as e:
                 logger.debug(f"提取消息失败: {e}")
 
-            await asyncio.sleep(1)  # 每秒检查一次
+            await asyncio.sleep(0.3)  # 每0.3秒检查一次，减少延迟
 
     def _is_valid_danmaku(self, text: str) -> bool:
         """检查是否是有效弹幕"""

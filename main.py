@@ -184,9 +184,10 @@ class DanmakuOrchestrator:
         """
         try:
             # 如果是ParsedMessage，直接使用
-            from src.douyin.parser_http import ParsedMessage
+            from src.douyin.parser_http import ParsedMessage as HttpParsedMessage
+            from src.douyin.connector_websocket_listener import ParsedMessage as WsParsedMessage
 
-            if isinstance(raw_message, ParsedMessage):
+            if isinstance(raw_message, (HttpParsedMessage, WsParsedMessage)):
                 parsed = raw_message
             elif isinstance(raw_message, dict):
                 # Mock连接器返回的是字典格式
@@ -244,24 +245,41 @@ class DanmakuOrchestrator:
             # 3. 转换为语音
             logger.info(f"正在转换语音: {content}")
 
-            try:
-                # 添加超时保护，避免TTS转换阻塞太久
-                audio_path = await asyncio.wait_for(
-                    self.tts.convert_with_cache(
-                        text=content,
-                        cache_dir=Path("cache")
-                    ),
-                    timeout=10.0  # 最多等待10秒
-                )
-            except asyncio.TimeoutError:
-                logger.warning(f"TTS转换超时（10秒），跳过: {content}")
-                return
-            except Exception as e:
-                logger.warning(f"TTS转换失败: {e}，跳过: {content}")
-                return
+            # TTS转换带重试机制
+            audio_path = None
+            max_retries = 2  # 最多重试2次
+
+            for attempt in range(max_retries):
+                try:
+                    # 添加超时保护，每次尝试最多等待5秒
+                    audio_path = await asyncio.wait_for(
+                        self.tts.convert_with_cache(
+                            text=content,
+                            cache_dir=Path("cache")
+                        ),
+                        timeout=5.0  # 减少单次超时时间
+                    )
+
+                    # 成功获取音频，跳出重试循环
+                    if audio_path:
+                        break
+
+                except asyncio.TimeoutError:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"TTS转换超时（5秒），第{attempt + 1}次重试: {content}")
+                        await asyncio.sleep(0.5)  # 短暂等待后重试
+                    else:
+                        logger.error(f"TTS转换超时，已重试{max_retries}次，跳过: {content}")
+                        logger.info(f"💡 提示: 该弹幕未播放，原因: TTS转换超时")
+                        return
+                except Exception as e:
+                    logger.warning(f"TTS转换失败: {e}，跳过: {content}")
+                    logger.info(f"💡 提示: 该弹幕未播放，原因: TTS转换异常")
+                    return
 
             if not audio_path:
                 logger.warning("语音转换失败，跳过播放")
+                logger.info(f"💡 提示: 该弹幕未播放，原因: 无法获取音频文件")
                 return
 
             # 4. 将音频路径放入播放队列（等待前一条播放完成）

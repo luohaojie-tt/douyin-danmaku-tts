@@ -187,22 +187,52 @@ class EdgeTTSEngine:
             Path: 音频文件路径，失败返回 None
         """
         import hashlib
+        import os
 
         # 生成缓存键（文本 + 音色 + 语速）
         cache_key = f"{text}_{self.voice}_{self.rate}"
         cache_hash = hashlib.md5(cache_key.encode()).hexdigest()
         cache_file = cache_dir / f"{cache_hash}.mp3"
 
-        # 检查缓存
+        # 检查缓存是否存在且有效
         if cache_file.exists():
-            logger.debug(f"缓存命中: {cache_file.name}")
-            return cache_file
+            # 检查文件大小，如果小于 1KB 可能是损坏文件
+            if cache_file.stat().st_size > 1024:
+                logger.debug(f"缓存命中: {cache_file.name}")
+                return cache_file
+            else:
+                logger.warning(f"缓存文件损坏或为空 (size={cache_file.stat().st_size}), 将重新生成: {cache_file.name}")
+                try:
+                    os.remove(cache_file)
+                except Exception as e:
+                    logger.warning(f"删除损坏缓存文件失败: {e}")
 
-        # 转换并保存
-        if await self.convert_to_file(text, cache_file):
-            return cache_file
-
-        return None
+        # 使用临时文件写入，避免写入中断导致文件损坏
+        temp_file = cache_dir / f"{cache_hash}.tmp"
+        
+        try:
+            # 转换并保存到临时文件
+            if await self.convert_to_file(text, temp_file):
+                # 检查临时文件是否有效
+                if temp_file.exists() and temp_file.stat().st_size > 1024:
+                    # 原子重命名
+                    temp_file.replace(cache_file)
+                    return cache_file
+                else:
+                    logger.error(f"生成的音频文件无效 (size={temp_file.stat().st_size if temp_file.exists() else 0})")
+                    if temp_file.exists():
+                        os.remove(temp_file)
+                    return None
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"生成音频文件异常: {e}")
+            if temp_file.exists():
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+            return None
 
     @classmethod
     def get_available_voices(cls) -> dict:

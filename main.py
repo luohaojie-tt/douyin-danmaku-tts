@@ -175,12 +175,16 @@ class DanmakuOrchestrator:
 
     async def handle_message(self, raw_message):
         """
-        处理接收到的消息
+        处理接收到的消息（异步非阻塞）
+        """
+        # 将消息处理逻辑放入后台任务，避免阻塞WebSocket监听循环
+        asyncio.create_task(self._process_message_logic(raw_message))
 
+    async def _process_message_logic(self, raw_message):
+        """
+        处理接收到的消息的实际逻辑
+        
         流程: 解析 → TTS → 播放
-
-        Args:
-            raw_message: 原始消息（字典或二进制或ParsedMessage）
         """
         try:
             # 如果是ParsedMessage，直接使用

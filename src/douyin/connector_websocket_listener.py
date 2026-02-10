@@ -106,113 +106,162 @@ class WebSocketListenerConnector:
             await self.context.add_init_script("""
             window.douyinMessages = [];
             window.domMessageCount = 0;
-            window.seenTexts = new Set();
             window.lastScanTime = Date.now();
+            window.chatContainer = null;
 
-            // 定期扫描页面中的弹幕元素（更可靠）
-            function scanDanmaku() {
-                try {
-                    // 获取所有文本节点
-                    const walker = document.createTreeWalker(
-                        document.body,
-                        NodeFilter.SHOW_TEXT,
-                        null,
-                        false
-                    );
+            // 辅助函数：寻找弹幕容器
+            function findChatContainer() {
+                if (window.chatContainer && window.chatContainer.isConnected) {
+                    return window.chatContainer;
+                }
 
-                    let node;
-                    const newMessages = [];
+                // 策略1：根据已知类名查找（最准确）
+                // 抖音直播网页版通常包含 'webcast-chatroom___list' 或 'webcast-chatroom___items'
+                const potentialClasses = [
+                    'webcast-chatroom___list',
+                    'webcast-chatroom___items',
+                    'Barrage-list',
+                    'chat-scroll-area'
+                ];
 
-                    while(node = walker.nextNode()) {
-                        const text = node.textContent || '';
-
-                        // 过滤条件
-                        if (text.length >= 3 && text.length <= 50) {
-                            // 检查是否包含中文
-                            if (/[\\u4e00-\\u9fff]/.test(text)) {
-                                // 排除系统消息和UI元素
-                                const systemKeywords = [
-                                    '点赞', '关注', '粉丝', '主播', '直播间', '进入', '送出', '购买了', '热榜', '在线人数',
-                                    '放映厅', '小游戏', '充钻石', '客户端', '全部商品', '下载', '加载中', '在线观众',
-                                    '退出', '开启', '关闭', '模式', '网页全屏', '小窗', '读屏标签',
-                                    '小时榜', '人气榜', '贡献用户', '高等级用户', '嘉年华', '私人飞机',
-                                    '抖音', '精选', '充值', '金币', '钻石', '账号', '登录', '注册',
-                                    '许可证', '版权', '©', 'ICP备', '京ICP备', '网文', '视听',
-                                    // 菜单项
-                                    '我的喜欢', '我的收藏', '观看历史', '稍后再看', '我的作品', '我的预约', '我的订单',
-                                    '发布视频', '视频管理', '作品数据', '开直播', '直播数据', '创作者学习中心', '创作者中心', '剪映专业版',
-                                    // 法律和备案信息
-                                    '药品', '医疗器械', '网络信息', '服务备案', '京', '网药械', '备字',
-                                    '违法', '不良信息', '举报', '算法推荐', '专项举报', '从业人员', '违法违规', '反馈',
-                                    // UI控制
-                                    '屏幕旋转', '才能开始聊天',
-                                    // 商品相关
-                                    '爆款', '支持试用', '年终收官', '购物团'
-                                ];
-                                const isSystem = systemKeywords.some(kw => text.includes(kw));
-
-                                // 排除纯数字、带单位的数字
-                                const isNumber = /^\\d+[万千百十]+$/.test(text) || /^\\d+\\.\\d+万$/.test(text) || /^\\d+钻$/.test(text) || /^\\d+币$/.test(text);
-
-                                // 排除按钮和链接
-                                const parent = node.parentElement;
-                                const isButton = parent && (parent.tagName === 'BUTTON' || parent.closest('button') || parent.tagName === 'A');
-
-                                if (!isSystem && !isButton && !isNumber) {
-                                    // 检查是否已处理
-                                    const textKey = text.trim();
-                                    if (!window.seenTexts.has(textKey)) {
-                                        window.seenTexts.add(textKey);
-
-                                        // 提取昵称
-                                        let nickname = '用户';
-                                        if (parent) {
-                                            // 查找父元素的兄弟元素（可能包含用户名）
-                                            const grandParent = parent.parentElement;
-                                            if (grandParent) {
-                                                const children = Array.from(grandParent.children);
-                                                for (const child of children) {
-                                                    if (child !== parent && child.textContent && child.textContent.length < 20 && child.textContent.length >= 2) {
-                                                        const childText = child.textContent.trim();
-                                                        // 过滤系统关键词和数字
-                                                        const isChildSystem = systemKeywords.some(kw => childText.includes(kw));
-                                                        const isChildNumber = /^\\d+[万千百十]+$/.test(childText) || /^\\d+\\.\\d+万$/.test(childText) || /^\\d+钻$/.test(childText) || /^\\d+币$/.test(childText);
-                                                        if (!isChildSystem && !isChildNumber) {
-                                                            nickname = childText;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        newMessages.push({
-                                            content: text.trim(),
-                                            nickname: nickname,
-                                            timestamp: Date.now()
-                                        });
-
-                                        console.log('[DOM弹幕]', nickname, ':', text.trim());
-                                    }
-                                }
-                            }
-                        }
+                for (const cls of potentialClasses) {
+                    const el = document.querySelector(`div[class*="${cls}"], ul[class*="${cls}"]`);
+                    if (el) {
+                        console.log(`[DOM监听] 找到弹幕容器，类名: ${el.className}`);
+                        window.chatContainer = el;
+                        return el;
                     }
+                }
 
-                    // 添加到全局消息列表
-                    if (newMessages.length > 0) {
-                        window.douyinMessages.push(...newMessages);
-                        window.domMessageCount += newMessages.length;
-                    }
-                } catch(e) {
-                    console.error('[扫描失败]', e);
+                // 策略2：查找包含大量 "div" 子元素的容器（启发式）
+                // 仅在策略1失效时使用，避免误判
+                return null;
+            }
+
+            // 处理单个弹幕节点
+            function processNode(node) {
+                if (!node) return;
+                
+                // 使用 innerText 获取可见文本，格式通常为 "昵称：内容"
+                const rawText = node.innerText || node.textContent || '';
+                const textKey = rawText.trim();
+
+                if (!textKey) return;
+
+                // 检查是否已处理
+                if (node.__douyin_processed) return;
+                node.__douyin_processed = true;
+                
+                // --- 步骤1: 尝试分离昵称和内容 ---
+                let nickname = '';
+                let content = textKey;
+                
+                // 尝试寻找分隔符 (中文冒号或英文冒号)
+                // 注意：有些弹幕结构是 <span>昵称</span><span>内容</span>，innerText 会自动拼接
+                let colonIndex = textKey.indexOf('：');
+                if (colonIndex === -1) {
+                    colonIndex = textKey.indexOf(': ');
+                }
+
+                if (colonIndex > 0 && colonIndex < 30) { // 假设昵称不会超过30字符
+                    nickname = textKey.substring(0, colonIndex).trim();
+                    content = textKey.substring(colonIndex + 1).trim();
+                }
+
+                // --- 步骤2: 严格过滤非弹幕内容 (基于内容部分) ---
+                // 这些是系统生成的动态消息，混合在弹幕列表中
+                const systemKeywords = [
+                    '为主播点赞了', '点亮了',
+                    '关注了主播', '关注了直播间',
+                    '分享了直播间', '分享了',
+                    '加入了直播间', '来了', '进入直播间',
+                    '送出了', '送出',
+                    '正在去购买', '正在购买', '成功购买', '去购买',
+                    '连击', 'Combo',
+                    '点击', '浏览', '查看',
+                    '欢迎', '感谢',
+                    '购买了'
+                ];
+
+                // 检查内容是否包含系统关键词
+                const isSystem = systemKeywords.some(kw => content.includes(kw));
+                
+                // 特殊处理 "来了" (通常在结尾)
+                const isArrival = content.endsWith('来了');
+
+                if (isSystem || isArrival) {
+                    return; // 丢弃系统消息
+                }
+
+                // 过滤纯数字 (可能是ID、等级、统计数据)
+                // 但保留简单的数字弹幕 (如 "666", "111")
+                // 如果是纯数字且长度 > 6，或者是 "1.2w" 这种格式，则过滤
+                const isLongId = /^\d{7,}$/.test(content);
+                const isStat = /^\d+(\.\d+)?[万千百w]+$/i.test(content);
+                
+                if (isLongId || isStat) {
+                    return;
+                }
+
+                // --- 步骤3: 输出有效弹幕 ---
+                // 如果没有分离出昵称，暂时用 '用户' 代替，或者整句作为内容
+                // 只有非空内容才推送
+                if (content && content.length > 0) {
+                    window.douyinMessages.push({
+                        content: content,
+                        nickname: nickname || '用户',
+                        raw: textKey,
+                        timestamp: Date.now()
+                    });
+                    window.domMessageCount++;
                 }
             }
 
-            // 每秒扫描一次
-            setInterval(scanDanmaku, 1000);
+            // 使用 MutationObserver 监听 DOM 变化（最高效）
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    if (mutation.type === 'childList') {
+                        mutation.addedNodes.forEach(node => {
+                            // 只处理元素节点
+                            if (node.nodeType === 1) { // ELEMENT_NODE
+                                processNode(node);
+                            }
+                        });
+                    }
+                }
+            });
 
-            console.log('[初始化] DOM弹幕监听器已启动（定期扫描模式）');
+            // 启动监听
+            function startObserving() {
+                const container = findChatContainer();
+                if (container) {
+                    console.log('[DOM监听] 启动 MutationObserver 监听');
+                    observer.observe(container, {
+                        childList: true,
+                        subtree: true // 监听子孙节点变化，因为文字可能在深层 span 中
+                    });
+                } else {
+                    console.log('[DOM监听] 未找到弹幕容器，将在 2 秒后重试');
+                    setTimeout(startObserving, 2000);
+                }
+            }
+            
+            // 页面加载完成后启动
+            if (document.readyState === 'complete') {
+                startObserving();
+            } else {
+                window.addEventListener('load', startObserving);
+            }
+            
+            // 备用：如果 MutationObserver 失效，保留一个低频的全局扫描（每3秒）
+            // 但仅扫描特定容器（如果找到）
+            setInterval(() => {
+                if (!window.chatContainer || !window.chatContainer.isConnected) {
+                    startObserving();
+                }
+            }, 3000);
+
+            console.log('[初始化] DOM弹幕监听器已注入 (MutationObserver模式)');
             """)
             logger.info("✓ DOM监听脚本已注入")
 
@@ -362,7 +411,11 @@ class WebSocketListenerConnector:
 
     def _is_valid_danmaku(self, text: str) -> bool:
         """检查是否是有效弹幕"""
-        if not text or len(text) < 2:
+        if not text:
+            return False
+            
+        # 长度限制放宽
+        if len(text) > 50:
             return False
 
         # 过滤系统消息
@@ -373,7 +426,7 @@ class WebSocketListenerConnector:
             r'^点赞',
             r'^关注',
             r'^粉丝',
-            r'^主播',
+            # r'^主播', # 单独处理
             r'^直播',
             r'^房间',
             r'^榜',
@@ -383,16 +436,45 @@ class WebSocketListenerConnector:
             r'^感谢',
             r'^欢迎',
             r'^进入',
+            r'^送出',
+            r'^购买',
+            r'^充值',
+            r'^金币',
+            r'^钻石',
+            r'^点击',
+            r'^发送',
+            r'^分享',
+            r'^复制',
+            r'^举报',
+            r'^取消',
+            r'^确定',
+            r'^连击',
+            r'^浏览',
+            r'^查看',
         ]
 
         import re
         for pattern in invalid_patterns:
-            if re.match(pattern, text):
+            if re.search(pattern, text): # 改为search，只要包含就过滤
                 return False
 
-        # 必须是中文内容
-        chinese_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-        return chinese_count > 0
+        # 特殊处理 "主播"
+        if text == '主播' or text.startswith('主播 '):
+            return False
+
+        # 过滤纯数字（可能是ID或统计数据），但保留简单数字弹幕（如666）
+        # 如果是纯数字且长度>6，认为是ID/时间/统计
+        if text.isdigit() and len(text) > 6:
+            return False
+            
+        # 过滤统计格式（1.2w, 1000+, 10k）
+        if re.match(r'^\d+(\.\d+)?[万千百十wk]+$', text, re.IGNORECASE):
+            return False
+
+        # 必须包含至少一个有效字符（中文、字母、数字、符号）
+        # 不再强制要求中文，允许 "666", "hello", "..."
+        valid_char_count = sum(1 for c in text if c.isprintable() and not c.isspace())
+        return valid_char_count > 0
 
     async def listen(self, message_handler: Callable):
         """监听消息"""

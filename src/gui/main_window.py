@@ -462,9 +462,10 @@ class MainWindow(QMainWindow):
                 # 转换滑块值为速率字符串格式
                 rate_str = f"{rate:+d}%"
                 self.orchestrator.set_tts_rate(rate_str)
-                self.log_widget.info(f"语速调整为: {rate:+d}%", "设置")
+                # 不再记录日志到UI，避免频繁更新
+                # 日志已在control_panel中通过logger.info记录到文件
             else:
-                self.log_widget.warning("编排器未初始化", "设置")
+                logger.warning("编排器未初始化，无法设置语速")
         except Exception as e:
             logger.error(f"处理语速变化失败: {e}")
 
@@ -480,9 +481,10 @@ class MainWindow(QMainWindow):
                 # 转换为0.0-1.0范围并更新音量
                 normalized_volume = volume / 100.0
                 self.orchestrator.set_tts_volume(normalized_volume)
-                self.log_widget.info(f"音量调整为: {volume}", "设置")
+                # 不再记录日志到UI，避免频繁更新
+                # 日志已在control_panel中通过logger.info记录到文件
             else:
-                self.log_widget.warning("编排器未初始化", "设置")
+                logger.warning("编排器未初始化，无法设置音量")
         except Exception as e:
             logger.error(f"处理音量变化失败: {e}")
 

@@ -247,14 +247,15 @@ class ControlPanel(QWidget):
         # 立即更新UI标签（用户需要即时反馈）
         self.rate_value_label.setText(f"{value:+d}%")
 
-        # 防抖：100ms后才发射信号
+        # 防抖：300ms后才发射信号（避免频繁触发TTS设置）
         self._pending_rate = value
-        self._rate_debounce_timer.start(100)
+        self._rate_debounce_timer.start(300)
 
     def _emit_rate_change(self):
         """防抖定时器超时后发射语速变化信号"""
         if self._pending_rate is not None:
-            logger.debug(f"语速调整为: {self._pending_rate:+d}%")
+            # 只在最终值改变时记录日志
+            logger.info(f"语速调整为: {self._pending_rate:+d}%")
             self.signals.speech_rate_changed.emit(self._pending_rate)
             self._pending_rate = None
 
@@ -268,14 +269,15 @@ class ControlPanel(QWidget):
         # 立即更新UI标签（用户需要即时反馈）
         self.volume_value_label.setText(str(value))
 
-        # 防抖：100ms后才发射信号
+        # 防抖：300ms后才发射信号（避免频繁触发TTS设置）
         self._pending_volume = value
-        self._volume_debounce_timer.start(100)
+        self._volume_debounce_timer.start(300)
 
     def _emit_volume_change(self):
         """防抖定时器超时后发射音量变化信号"""
         if self._pending_volume is not None:
-            logger.debug(f"音量调整为: {self._pending_volume}")
+            # 只在最终值改变时记录日志
+            logger.info(f"音量调整为: {self._pending_volume}")
             self.signals.volume_changed.emit(self._pending_volume)
             self._pending_volume = None
 

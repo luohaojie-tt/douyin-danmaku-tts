@@ -110,6 +110,10 @@ class GUIOrchestrator(QObject):
         self._tts_conversion_lock = asyncio.Lock()
         self._tts_converting_count = 0
 
+        # TTS settings cache (avoid modifying during conversion)
+        self._tts_rate_pending = None  # Pending rate setting
+        self._tts_volume_pending = None  # Pending volume setting
+
         logger.info("GUIOrchestrator initialized")
 
     # ========== Property Accessors (delegate to base orchestrator) ==========

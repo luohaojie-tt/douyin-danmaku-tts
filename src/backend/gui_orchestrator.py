@@ -106,6 +106,14 @@ class GUIOrchestrator(QObject):
         # TTS enabled state
         self._tts_enabled = True
 
+        # TTS settings cache（避免直接修改TTS对象）
+        self._tts_rate_pending = None  # 待应用的rate设置
+        self._tts_volume_pending = None  # 待应用的volume设置
+
+        # TTS conversion state lock
+        self._tts_conversion_lock = asyncio.Lock()
+        self._tts_converting_count = 0
+
         logger.info("GUIOrchestrator initialized")
 
     # ========== Property Accessors (delegate to base orchestrator) ==========
@@ -247,12 +255,28 @@ class GUIOrchestrator(QObject):
             # ========== TTS Conversion ==========
             logger.info(f"正在转换语音: {content}")
 
-            # TTS转换带重试机制
-            tts = self._orchestrator.tts
-            audio_path = None
-            max_retries = 2
+            # 获取TTS转换锁（避免设置时打断正在进行的转换）
+            async with self._tts_conversion_lock:
+                self._tts_converting_count += 1
+                logger.debug(f"TTS转换计数: {self._tts_converting_count}")
 
-            for attempt in range(max_retries):
+                # 在转换前应用缓存的设置（如果有）
+                if self._tts_rate_pending:
+                    self._orchestrator.tts.rate = self._tts_rate_pending
+                    logger.info(f"应用缓存的rate设置: {self._tts_rate_pending}")
+                    self._tts_rate_pending = None
+
+                if self._tts_volume_pending:
+                    self._orchestrator.player.volume = self._tts_volume_pending
+                    logger.info(f"应用缓存的volume设置: {self._tts_volume_pending}")
+                    self._tts_volume_pending = None
+
+                # TTS转换带重试机制
+                tts = self._orchestrator.tts
+                audio_path = None
+                max_retries = 2
+
+                for attempt in range(max_retries):
                 try:
                     audio_path = await asyncio.wait_for(
                         tts.convert_with_cache(
@@ -282,19 +306,24 @@ class GUIOrchestrator(QObject):
                     # 不return，继续处理后续弹幕，只是这条不播报语音
                     logger.info(f"弹幕将显示但不播报语音: {content}")
 
-            # ========== Add to play queue ==========
-            if audio_path:
-                # 只有成功转换才加入播放队列
-                await self._orchestrator.play_queue.put({
-                    'audio_path': audio_path,
-                    'content': content
-                })
+                # ========== Add to play queue ==========
+                if audio_path:
+                    # 只有成功转换才加入播放队列
+                    await self._orchestrator.play_queue.put({
+                        'audio_path': audio_path,
+                        'content': content
+                    })
 
-                self._orchestrator.stats["messages_played"] += 1
-                logger.info(f"加入播放队列 (总计: {self._orchestrator.stats['messages_played']})")
-            else:
-                # TTS失败，记录但不影响弹幕显示
-                logger.warning(f"该弹幕未播放语音: {content}")
+                    self._orchestrator.stats["messages_played"] += 1
+                    logger.info(f"加入播放队列 (总计: {self._orchestrator.stats['messages_played']})")
+                else:
+                    # TTS失败，记录但不影响弹幕显示
+                    logger.warning(f"该弹幕未播放语音: {content}")
+
+                # 释放锁
+                self._tts_converting_count -= 1
+                logger.debug(f"TTS转换完成，剩余计数: {self._tts_converting_count}")
+            # lock自动释放（async with）
 
             # ========== EMIT SIGNAL: Stats Updated ==========
             self.stats_updated.emit(self._orchestrator.stats.copy())
@@ -500,25 +529,27 @@ class GUIOrchestrator(QObject):
 
     def set_tts_rate(self, rate: str):
         """
-        Set TTS playback rate
+        Set TTS playback rate（缓存设置，等待当前转换完成）
 
         Args:
             rate: Rate string (e.g., "+20%", "-10%")
         """
         if self._orchestrator.tts:
-            self._orchestrator.tts.rate = rate
-            logger.info(f"TTS rate set to: {rate}")
+            # 缓存设置，等待当前转换完成后再应用
+            self._tts_rate_pending = rate
+            logger.info(f"TTS rate已缓存: {rate} (将在下次转换时应用)")
 
     def set_tts_volume(self, volume: float):
         """
-        Set TTS playback volume
+        Set TTS playback volume（缓存设置，等待当前转换完成）
 
         Args:
             volume: Volume level (0.0-1.0)
         """
         if self._orchestrator.player:
-            self._orchestrator.player.volume = volume
-            logger.info(f"TTS volume set to: {volume}")
+            # 缓存设置，等待当前转换完成后再应用
+            self._tts_volume_pending = volume
+            logger.info(f"TTS volume已缓存: {volume} (将在下次转换时应用)")
 
     # ========== Chrome Debug Mode Management ==========
 

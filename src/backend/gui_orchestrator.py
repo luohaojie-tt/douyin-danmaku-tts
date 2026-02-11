@@ -114,6 +114,9 @@ class GUIOrchestrator(QObject):
         self._tts_rate_pending = None  # Pending rate setting
         self._tts_volume_pending = None  # Pending volume setting
 
+        # Volume update queue (thread-safe pygame volume updates)
+        self._volume_update_queue = asyncio.Queue()
+
         logger.info("GUIOrchestrator initialized")
 
     # ========== Property Accessors (delegate to base orchestrator) ==========
@@ -146,6 +149,10 @@ class GUIOrchestrator(QObject):
             success = await self._orchestrator.initialize()
 
             if success:
+                # 启动音量更新处理任务（避免pygame竞态）
+                asyncio.create_task(self._process_volume_updates())
+                logger.debug("音量更新处理任务已启动")
+
                 logger.info("GUIOrchestrator initialization complete")
                 self.connection_changed.emit(True, "初始化完成")
             else:
@@ -547,14 +554,48 @@ class GUIOrchestrator(QObject):
 
     def set_tts_volume(self, volume: float):
         """
-        Set TTS playback volume（立即应用，线程安全）
+        Set TTS playback volume（异步队列，避免pygame竞态）
 
         Args:
             volume: Volume level (0.0-1.0)
         """
-        if self._orchestrator.player:
-            self._orchestrator.player.volume = volume
-            # 不打印日志，避免主线程阻塞
+        # 使用asyncio队列异步设置音量，避免与pygame播放线程竞态
+        try:
+            # 非阻塞方式放入队列
+            self._volume_update_queue.put_nowait(volume)
+            logger.debug(f"音量设置已加入队列: {volume}")
+        except Exception as e:
+            logger.error(f"设置音量失败: {e}")
+
+    async def _process_volume_updates(self):
+        """处理音量更新队列（在asyncio事件循环中安全执行）"""
+        try:
+            while self.is_running:
+                try:
+                    # 等待音量更新（带超时，避免永久阻塞）
+                    volume = await asyncio.wait_for(
+                        self._volume_update_queue.get(),
+                        timeout=1.0
+                    )
+
+                    # 在asyncio上下文中安全设置音量
+                    if self._orchestrator.player:
+                        self._orchestrator.player.volume = volume
+                        logger.info(f"音量已更新: {volume}")
+
+                except asyncio.TimeoutError:
+                    # 超时正常，继续下一轮
+                    continue
+                except Exception as e:
+                    logger.error(f"处理音量更新失败: {e}")
+
+        except Exception as e:
+            logger.error(f"音量更新处理循环异常: {e}")
+
+    async def start_volume_worker(self):
+        """启动音量更新处理任务"""
+        asyncio.create_task(self._process_volume_updates())
+        logger.debug("音量更新处理任务已启动")
 
     # ========== Chrome Debug Mode Management ==========
 

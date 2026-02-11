@@ -5,6 +5,7 @@
 集成GUIOrchestrator进行后端信号处理。
 """
 
+import sys
 import asyncio
 import logging
 from datetime import datetime
@@ -30,7 +31,15 @@ logger = logging.getLogger(__name__)
 
 def load_stylesheet():
     """加载样式表"""
-    style_path = Path(__file__).parent.parent.parent / "resources" / "styles" / "dark_theme.qss"
+    # 动态获取资源路径（适配打包环境）
+    if getattr(sys, 'frozen', False):
+        # 打包后：exe所在目录的_internal子目录
+        base_path = Path(sys.executable).parent / "_internal"
+    else:
+        base_path = Path(__file__).parent.parent.parent
+
+    style_path = base_path / "resources" / "styles" / "dark_theme.qss"
+
     try:
         with open(style_path, "r", encoding="utf-8") as f:
             return f.read()

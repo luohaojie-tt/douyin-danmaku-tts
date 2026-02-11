@@ -192,3 +192,78 @@ MIT License
 - [edge-tts](https://github.com/rany2/edge-tts) - Microsoft Edge TTS 引擎
 - [pygame-ce](https://github.com/pygame-community/pygame-ce) - 音频播放库
 - [playwright](https://playwright.dev/) - 浏览器自动化
+
+## 📦 打包版本使用说明
+
+### 下载和运行
+
+1. 从 [Releases](https://github.com/yourusername/yourrepo/releases) 下载最新版本的压缩包
+2. 解压压缩包到任意目录
+3. 双击 `抖音弹幕播报.exe` 启动程序
+
+### 目录结构
+
+```
+抖音弹幕语音播报工具/
+├── 抖音弹幕播报.exe      # 主程序
+├── config.ini            # 配置文件（可修改）
+├── cookies.txt.example   # Cookie示例文件
+├── cache/                # TTS缓存目录（自动生成）
+└── logs/                 # 日志目录（自动生成）
+```
+
+### 系统要求
+
+- **操作系统**: Windows 10/11 (64位)
+- **依赖**: 需要安装 Google Chrome 浏览器
+- **网络**: 首次使用TTS功能需要网络连接
+
+### 首次使用
+
+1. 双击启动程序
+2. 输入抖音直播间房间号
+3. 点击"连接"按钮
+4. 程序会自动启动Chrome调试模式（如需要）
+
+### 配置说明
+
+配置文件 `config.ini` 包含以下设置：
+
+- **房间号记忆**: 自动记住房间上次连接的房间号
+- **TTS设置**: 语速、音量等
+- **黑名单**: 过滤特定用户或关键词
+
+### 更新版本
+
+当有新版本发布时：
+
+1. 下载新版本的 exe 文件
+2. 关闭旧版本程序
+3. 用新文件替换旧文件
+4. 保留 `config.ini` 和 `cache/` 目录
+
+### 常见问题
+
+**Q: 程序无法启动？**
+A: 请确保已安装 Google Chrome 浏览器。
+
+**Q: 提示缺少DLL文件？**
+A: 请安装 [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+
+**Q: TTS语音播报失败？**
+A: 请检查网络连接，edge-tts 需要访问 Microsoft 服务器。
+
+**Q: 如何卸载？**
+A: 直接删除整个安装目录即可，程序不写入注册表。
+
+### 开发版本
+
+如果您是开发者，可以使用源码版本：
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 运行程序
+python main_gui.py
+```

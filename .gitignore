@@ -55,3 +55,9 @@ cache/
 # 测试脚本（保留test_http_connector.py用于演示）
 test_*.py
 !test_http_connector.py
+
+# PyInstaller 打包
+build/
+dist/
+*.spec
+!build.spec

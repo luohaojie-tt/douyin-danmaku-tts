@@ -17,8 +17,16 @@ import sys
 import logging
 from pathlib import Path
 
-# 添加src目录到Python路径
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# 确定基础路径并添加src目录到Python路径
+if getattr(sys, 'frozen', False):
+    # 打包后的环境：_internal目录包含所有Python模块
+    base_path = Path(sys.executable).parent / "_internal"
+    sys.path.insert(0, str(base_path))
+else:
+    # 开发环境：脚本所在目录
+    base_path = Path(__file__).parent
+    sys.path.insert(0, str(base_path))
+    sys.path.insert(0, str(base_path / "src"))
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
@@ -26,6 +34,35 @@ from PyQt5.QtCore import Qt
 from src.gui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
+
+
+def get_resource_path(relative_path: str) -> Path:
+    """
+    获取资源文件的绝对路径（兼容开发和打包环境）
+
+    Args:
+        relative_path: 相对路径
+
+    Returns:
+        资源文件的绝对路径
+    """
+    if getattr(sys, 'frozen', False):
+        # 打包后的环境：exe文件所在目录
+        return Path(sys.executable).parent / relative_path
+    else:
+        # 开发环境：项目根目录
+        return Path(__file__).parent / relative_path
+
+
+def ensure_directories():
+    """确保 cache/ 和 logs/ 目录存在"""
+    if getattr(sys, 'frozen', False):
+        base_path = Path(sys.executable).parent
+    else:
+        base_path = Path(__file__).parent
+
+    (base_path / "cache").mkdir(exist_ok=True)
+    (base_path / "logs").mkdir(exist_ok=True)
 
 
 def setup_logging(level: str = "INFO"):
@@ -51,6 +88,9 @@ def print_banner():
 def main():
     """GUI主程序入口"""
     print_banner()
+
+    # 确保必要目录存在
+    ensure_directories()
 
     # 设置日志
     setup_logging()

@@ -106,10 +106,6 @@ class GUIOrchestrator(QObject):
         # TTS enabled state
         self._tts_enabled = True
 
-        # TTS settings cache（避免直接修改TTS对象）
-        self._tts_rate_pending = None  # 待应用的rate设置
-        self._tts_volume_pending = None  # 待应用的volume设置
-
         # TTS conversion state lock
         self._tts_conversion_lock = asyncio.Lock()
         self._tts_converting_count = 0
@@ -260,70 +256,66 @@ class GUIOrchestrator(QObject):
                 self._tts_converting_count += 1
                 logger.debug(f"TTS转换计数: {self._tts_converting_count}")
 
-                # 在转换前应用缓存的设置（如果有）
-                if self._tts_rate_pending:
-                    self._orchestrator.tts.rate = self._tts_rate_pending
-                    logger.info(f"应用缓存的rate设置: {self._tts_rate_pending}")
-                    self._tts_rate_pending = None
-
-                if self._tts_volume_pending:
-                    self._orchestrator.player.volume = self._tts_volume_pending
-                    logger.info(f"应用缓存的volume设置: {self._tts_volume_pending}")
-                    self._tts_volume_pending = None
-
-                # TTS转换带重试机制
-                tts = self._orchestrator.tts
-                audio_path = None
-                max_retries = 2
-
-                for attempt in range(max_retries):
                 try:
-                    audio_path = await asyncio.wait_for(
-                        tts.convert_with_cache(
-                            text=content,
-                            cache_dir=Path("cache")
-                        ),
-                        timeout=10.0  # 增加到10秒，减少超时
-                    )
+                    # 应用缓存的设置（在转换前）
+                    if self._tts_rate_pending:
+                        self._orchestrator.tts.rate = self._tts_rate_pending
+                        logger.debug(f"应用缓存的rate设置: {self._tts_rate_pending}")
+                        self._tts_rate_pending = None
 
-                    if audio_path:
-                        break
+                    # TTS转换带重试机制
+                    tts = self._orchestrator.tts
+                    audio_path = None
+                    max_retries = 2
 
-                except asyncio.TimeoutError:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"TTS转换超时（10秒），第{attempt + 1}次重试: {content}")
-                        await asyncio.sleep(0.5)
-                    else:
-                        error_msg = f"TTS转换超时，已重试{max_retries}次: {content}"
-                        logger.error(error_msg)
-                        self.error_occurred.emit("TTSTimeout", error_msg)
-                        # 不return，继续处理后续弹幕，只是这条不播报语音
-                        logger.info(f"弹幕将显示但不播报语音: {content}")
-                except Exception as e:
-                    error_msg = f"TTS转换失败: {e}: {content}"
-                    logger.warning(error_msg)
-                    self.error_occurred.emit("TTSError", str(e))
-                    # 不return，继续处理后续弹幕，只是这条不播报语音
-                    logger.info(f"弹幕将显示但不播报语音: {content}")
+                    for attempt in range(max_retries):
+                        try:
+                            audio_path = await asyncio.wait_for(
+                                tts.convert_with_cache(
+                                    text=content,
+                                    cache_dir=Path("cache")
+                                ),
+                                timeout=10.0  # 增加到10秒，减少超时
+                            )
 
-                # ========== Add to play queue ==========
-                if audio_path:
-                    # 只有成功转换才加入播放队列
-                    await self._orchestrator.play_queue.put({
-                        'audio_path': audio_path,
-                        'content': content
-                    })
+                            if audio_path:
+                                break
 
-                    self._orchestrator.stats["messages_played"] += 1
-                    logger.info(f"加入播放队列 (总计: {self._orchestrator.stats['messages_played']})")
-                else:
-                    # TTS失败，记录但不影响弹幕显示
-                    logger.warning(f"该弹幕未播放语音: {content}")
+                        except asyncio.TimeoutError:
+                            if attempt < max_retries - 1:
+                                logger.warning(f"TTS转换超时（10秒），第{attempt + 1}次重试: {content}")
+                                await asyncio.sleep(0.5)
+                            else:
+                                error_msg = f"TTS转换超时，已重试{max_retries}次: {content}"
+                                logger.error(error_msg)
+                                self.error_occurred.emit("TTSTimeout", error_msg)
+                                # 不return，继续处理后续弹幕，只是这条不播报语音
+                                logger.info(f"弹幕将显示但不播报语音: {content}")
+                        except Exception as e:
+                            error_msg = f"TTS转换失败: {e}: {content}"
+                            logger.warning(error_msg)
+                            self.error_occurred.emit("TTSError", str(e))
+                            # 不return，继续处理后续弹幕，只是这条不播报语音
+                            logger.info(f"弹幕将显示但不播报语音: {content}")
 
-                # 释放锁
-                self._tts_converting_count -= 1
-                logger.debug(f"TTS转换完成，剩余计数: {self._tts_converting_count}")
-            # lock自动释放（async with）
+                finally:
+                    # 确保在任何情况下都减少计数器
+                    self._tts_converting_count -= 1
+                    logger.debug(f"TTS转换完成，计数: {self._tts_converting_count}")
+
+            # ========== Add to play queue ==========
+            if audio_path:
+                # 只有成功转换才加入播放队列
+                await self._orchestrator.play_queue.put({
+                    'audio_path': audio_path,
+                    'content': content
+                })
+
+                self._orchestrator.stats["messages_played"] += 1
+                logger.info(f"加入播放队列 (总计: {self._orchestrator.stats['messages_played']})")
+            else:
+                # TTS失败，记录但不影响弹幕显示
+                logger.warning(f"该弹幕未播放语音: {content}")
 
             # ========== EMIT SIGNAL: Stats Updated ==========
             self.stats_updated.emit(self._orchestrator.stats.copy())
@@ -529,27 +521,36 @@ class GUIOrchestrator(QObject):
 
     def set_tts_rate(self, rate: str):
         """
-        Set TTS playback rate（缓存设置，等待当前转换完成）
+        Set TTS playback rate (智能应用或缓存)
+
+        如果有TTS转换正在进行，则缓存设置；否则立即应用。
 
         Args:
             rate: Rate string (e.g., "+20%", "-10%")
         """
-        if self._orchestrator.tts:
-            # 缓存设置，等待当前转换完成后再应用
+        if not self._orchestrator.tts:
+            return
+
+        # 检查是否有TTS转换正在进行
+        if self._tts_converting_count > 0:
+            # 有转换在进行，只缓存不应用（避免打断）
             self._tts_rate_pending = rate
-            logger.info(f"TTS rate已缓存: {rate} (将在下次转换时应用)")
+            # 不打印日志，避免主线程阻塞
+        else:
+            # 没有转换在进行，立即应用
+            self._orchestrator.tts.rate = rate
+            # 不打印日志，避免主线程阻塞
 
     def set_tts_volume(self, volume: float):
         """
-        Set TTS playback volume（缓存设置，等待当前转换完成）
+        Set TTS playback volume（立即应用，线程安全）
 
         Args:
             volume: Volume level (0.0-1.0)
         """
         if self._orchestrator.player:
-            # 缓存设置，等待当前转换完成后再应用
-            self._tts_volume_pending = volume
-            logger.info(f"TTS volume已缓存: {volume} (将在下次转换时应用)")
+            self._orchestrator.player.volume = volume
+            # 不打印日志，避免主线程阻塞
 
     # ========== Chrome Debug Mode Management ==========
 

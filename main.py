@@ -300,8 +300,8 @@ class DanmakuOrchestrator:
             self.stats["errors"] += 1
 
     async def _play_queue_worker(self):
-        """播放队列工作线程 - 确保弹幕按顺序播放，不打断"""
-        logger.info("播放队列工作线程已启动")
+        """播放队列工作线程 - 确保弹幕按顺序播放，不打断（非阻塞）"""
+        logger.info("播放队列工作线程已启动（非阻塞模式）")
         try:
             while self.is_running:
                 try:
@@ -311,12 +311,19 @@ class DanmakuOrchestrator:
                     audio_path = play_item['audio_path']
                     content = play_item['content']
 
-                    # 播放语音（阻塞模式，等待播放完成）
+                    # 播放语音（非阻塞模式，使用异步等待）
                     logger.debug(f"开始播放: {content}")
-                    success = self.player.play(audio_path, blocking=True)
+                    success = self.player.play(audio_path, blocking=False)
 
                     if not success:
                         logger.warning(f"播放失败: {content}")
+                    else:
+                        # 非阻塞播放，使用异步轮询等待播放完成
+                        # 这样不会阻塞 asyncio 事件循环，Qt 主线程可以响应用户操作
+                        while self.player.is_playing():
+                            await asyncio.sleep(0.1)  # 每100ms检查一次
+
+                        logger.debug(f"播放完成: {content}")
 
                     # 标记队列任务完成
                     self.play_queue.task_done()

@@ -247,9 +247,9 @@ class ControlPanel(QWidget):
         # 立即更新UI标签（用户需要即时反馈）
         self.rate_value_label.setText(f"{value:+d}%")
 
-        # 防抖：300ms后才发射信号（避免频繁触发TTS设置）
+        # 防抖：150ms后才发射信号（平衡响应性和性能）
         self._pending_rate = value
-        self._rate_debounce_timer.start(300)
+        self._rate_debounce_timer.start(150)
 
     def _emit_rate_change(self):
         """防抖定时器超时后发射语速变化信号"""
@@ -269,9 +269,9 @@ class ControlPanel(QWidget):
         # 立即更新UI标签（用户需要即时反馈）
         self.volume_value_label.setText(str(value))
 
-        # 防抖：300ms后才发射信号（避免频繁触发TTS设置）
+        # 防抖：150ms后才发射信号（平衡响应性和性能）
         self._pending_volume = value
-        self._volume_debounce_timer.start(300)
+        self._volume_debounce_timer.start(150)
 
     def _emit_volume_change(self):
         """防抖定时器超时后发射音量变化信号"""

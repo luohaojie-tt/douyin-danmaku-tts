@@ -259,7 +259,7 @@ class GUIOrchestrator(QObject):
                             text=content,
                             cache_dir=Path("cache")
                         ),
-                        timeout=5.0
+                        timeout=10.0  # 增加到10秒，减少超时
                     )
 
                     if audio_path:
@@ -267,33 +267,34 @@ class GUIOrchestrator(QObject):
 
                 except asyncio.TimeoutError:
                     if attempt < max_retries - 1:
-                        logger.warning(f"TTS转换超时（5秒），第{attempt + 1}次重试: {content}")
+                        logger.warning(f"TTS转换超时（10秒），第{attempt + 1}次重试: {content}")
                         await asyncio.sleep(0.5)
                     else:
                         error_msg = f"TTS转换超时，已重试{max_retries}次: {content}"
                         logger.error(error_msg)
                         self.error_occurred.emit("TTSTimeout", error_msg)
-                        return
+                        # 不return，继续处理后续弹幕，只是这条不播报语音
+                        logger.info(f"弹幕将显示但不播报语音: {content}")
                 except Exception as e:
                     error_msg = f"TTS转换失败: {e}: {content}"
                     logger.warning(error_msg)
                     self.error_occurred.emit("TTSError", str(e))
-                    return
-
-            if not audio_path:
-                error_msg = f"语音转换失败: {content}"
-                logger.warning(error_msg)
-                self.error_occurred.emit("TTSFailure", error_msg)
-                return
+                    # 不return，继续处理后续弹幕，只是这条不播报语音
+                    logger.info(f"弹幕将显示但不播报语音: {content}")
 
             # ========== Add to play queue ==========
-            await self._orchestrator.play_queue.put({
-                'audio_path': audio_path,
-                'content': content
-            })
+            if audio_path:
+                # 只有成功转换才加入播放队列
+                await self._orchestrator.play_queue.put({
+                    'audio_path': audio_path,
+                    'content': content
+                })
 
-            self._orchestrator.stats["messages_played"] += 1
-            logger.info(f"加入播放队列 (总计: {self._orchestrator.stats['messages_played']})")
+                self._orchestrator.stats["messages_played"] += 1
+                logger.info(f"加入播放队列 (总计: {self._orchestrator.stats['messages_played']})")
+            else:
+                # TTS失败，记录但不影响弹幕显示
+                logger.warning(f"该弹幕未播放语音: {content}")
 
             # ========== EMIT SIGNAL: Stats Updated ==========
             self.stats_updated.emit(self._orchestrator.stats.copy())

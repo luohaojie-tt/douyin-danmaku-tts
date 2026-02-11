@@ -179,6 +179,14 @@ A: 检查系统音量和配置文件中的音量设置。
 ### Q: 弹幕被拆分成多条？
 A: 已在最新版本中修复，确保使用最新代码。
 
+## 📚 文档
+
+- **[用户使用手册](docs/USER_GUIDE.md)** - 完整的GUI操作指南
+- **[开发者指南](docs/DEVELOPMENT_GUIDE.md)** - 环境搭建、架构设计、代码规范
+- **[故障排除](docs/TROUBLESHOOTING.md)** - 常见问题诊断和解决
+- **[变更日志](CHANGELOG.md)** - 版本历史和功能记录
+- **[架构设计](docs/ARCHITECTURE.md)** - 系统架构详细说明
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！

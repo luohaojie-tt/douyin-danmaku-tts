@@ -70,6 +70,16 @@ class LogConfig:
 
 
 @dataclass
+class GUIConfig:
+    """GUI配置"""
+    last_room_id: str = ""  # 上次连接的房间ID
+    remember_room: bool = True  # 是否记住房间号
+    window_width: int = 1000  # 窗口宽度
+    window_height: int = 700  # 窗口高度
+    auto_start_chrome: bool = True  # 自动启动Chrome调试模式
+
+
+@dataclass
 class AppConfig:
     """应用程序总配置"""
     room: RoomConfig = field(default_factory=RoomConfig)
@@ -77,6 +87,7 @@ class AppConfig:
     filter: FilterConfig = field(default_factory=FilterConfig)
     playback: PlaybackConfig = field(default_factory=PlaybackConfig)
     log: LogConfig = field(default_factory=LogConfig)
+    gui: GUIConfig = field(default_factory=GUIConfig)
 
 
 # 默认配置实例（单例）

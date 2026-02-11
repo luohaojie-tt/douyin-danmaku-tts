@@ -18,6 +18,7 @@ from src.config.defaults import (
     FilterKeywordConfig,
     PlaybackConfig,
     LogConfig,
+    GUIConfig,
     DEFAULT_CONFIG
 )
 
@@ -261,6 +262,50 @@ def _load_log_config(parser: configparser.ConfigParser) -> LogConfig:
     return config
 
 
+def _load_gui_config(parser: configparser.ConfigParser) -> GUIConfig:
+    """加载GUI配置"""
+    section = 'gui'
+    if not parser.has_section(section):
+        logger.debug(f"配置文件缺少 [{section}] 节，使用默认配置")
+        return DEFAULT_CONFIG.gui
+
+    config = DEFAULT_CONFIG.gui
+
+    # last_room_id
+    if parser.has_option(section, 'last_room_id'):
+        config.last_room_id = parser.get(section, 'last_room_id')
+
+    # remember_room
+    if parser.has_option(section, 'remember_room'):
+        try:
+            config.remember_room = _parse_bool(parser.get(section, 'remember_room'))
+        except ValueError:
+            logger.warning(f"remember_room 配置值无效，使用默认值: {config.remember_room}")
+
+    # window_width
+    if parser.has_option(section, 'window_width'):
+        try:
+            config.window_width = parser.getint(section, 'window_width')
+        except ValueError:
+            logger.warning(f"window_width 配置值无效，使用默认值: {config.window_width}")
+
+    # window_height
+    if parser.has_option(section, 'window_height'):
+        try:
+            config.window_height = parser.getint(section, 'window_height')
+        except ValueError:
+            logger.warning(f"window_height 配置值无效，使用默认值: {config.window_height}")
+
+    # auto_start_chrome
+    if parser.has_option(section, 'auto_start_chrome'):
+        try:
+            config.auto_start_chrome = _parse_bool(parser.get(section, 'auto_start_chrome'))
+        except ValueError:
+            logger.warning(f"auto_start_chrome 配置值无效，使用默认值: {config.auto_start_chrome}")
+
+    return config
+
+
 def load_config(path: str = "config.ini") -> AppConfig:
     """
     加载配置文件
@@ -300,13 +345,15 @@ def load_config(path: str = "config.ini") -> AppConfig:
         filter_config = _load_filter_config(parser)
         playback_config = _load_playback_config(parser)
         log_config = _load_log_config(parser)
+        gui_config = _load_gui_config(parser)
 
         config = AppConfig(
             room=room_config,
             tts=tts_config,
             filter=filter_config,
             playback=playback_config,
-            log=log_config
+            log=log_config,
+            gui=gui_config
         )
 
         logger.info(f"配置加载成功: {config_path}")

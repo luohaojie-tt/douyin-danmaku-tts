@@ -1,0 +1,444 @@
+"""
+GUI Orchestrator - PyQt5 signal-enabled version of DanmakuOrchestrator
+
+This module extends the CLI-based DanmakuOrchestrator to emit Qt signals
+for GUI integration while preserving all existing functionality.
+"""
+
+import asyncio
+import logging
+from pathlib import Path
+from typing import Optional, Dict, Any
+from datetime import datetime
+
+from PyQt5.QtCore import QObject, pyqtSignal, QTimer, QThread
+from PyQt5.QtWidgets import QApplication
+
+# Import the base orchestrator
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from main import DanmakuOrchestrator
+
+logger = logging.getLogger(__name__)
+
+
+class GUIOrchestrator(QObject, DanmakuOrchestrator):
+    """
+    GUI-enabled orchestrator that extends DanmakuOrchestrator with Qt signals
+    
+    Signals:
+        message_received: Emitted when a danmaku message is received
+            Args:
+                user_name (str): Username
+                content (str): Message content
+                timestamp (str): ISO format timestamp
+        
+        connection_changed: Emitted when connection status changes
+            Args:
+                connected (bool): Connection status
+                message (str): Status message
+        
+        error_occurred: Emitted when an error occurs
+            Args:
+                error_type (str): Type of error
+                error_message (str): Error details
+        
+        stats_updated: Emitted when statistics are updated
+            Args:
+                stats (dict): Statistics dictionary with keys:
+                    - messages_received (int)
+                    - messages_played (int)
+                    - errors (int)
+    """
+    
+    # Qt signals definition
+    message_received = pyqtSignal(str, str, str)  # user_name, content, timestamp
+    connection_changed = pyqtSignal(bool, str)    # connected, message
+    error_occurred = pyqtSignal(str, str)         # error_type, error_message
+    stats_updated = pyqtSignal(dict)              # stats dictionary
+    
+    def __init__(
+        self,
+        room_id: str,
+        config_path: str = "config.ini",
+        use_mock: bool = False,
+        use_real: bool = False,
+        use_http: bool = False,
+        use_ws: bool = False
+    ):
+        """
+        Initialize GUI Orchestrator
+        
+        Args:
+            room_id: 直播间房间ID
+            config_path: 配置文件路径
+            use_mock: 是否使用Mock连接器
+            use_real: 是否使用真实连接器（Playwright）
+            use_http: 是否使用HTTP轮询连接器
+            use_ws: 是否使用WebSocket监听连接器（推荐）
+        """
+        # Initialize both parent classes
+        QObject.__init__(self)
+        DanmakuOrchestrator.__init__(
+            self,
+            room_id=room_id,
+            config_path=config_path,
+            use_mock=use_mock,
+            use_real=use_real,
+            use_http=use_http,
+            use_ws=use_ws
+        )
+        
+        # Message history for export functionality
+        self.message_history: list[Dict[str, Any]] = []
+        
+        # Timer for asyncio event loop integration
+        self._asyncio_timer = None
+        self._loop = None
+        
+        logger.info("GUIOrchestrator initialized")
+    
+    async def initialize(self):
+        """
+        Initialize all modules (overrides parent method)
+        
+        Returns:
+            bool: True if initialization successful
+        """
+        # Call parent initialize
+        success = await super().initialize()
+        
+        if success:
+            logger.info("GUIOrchestrator initialization complete")
+            self.connection_changed.emit(True, "初始化完成")
+        else:
+            logger.error("GUIOrchestrator initialization failed")
+            self.connection_changed.emit(False, "初始化失败")
+            self.error_occurred.emit("InitializationError", "Failed to initialize orchestrator")
+        
+        return success
+    
+    async def handle_message(self, raw_message):
+        """
+        Override parent method to emit Qt signals
+        
+        Args:
+            raw_message: Raw message from connector
+        """
+        # Create background task for message processing
+        asyncio.create_task(self._process_message_with_signals(raw_message))
+    
+    async def _process_message_with_signals(self, raw_message):
+        """
+        Process message and emit Qt signals (GUI version)
+        
+        This extends the parent's _process_message_logic by:
+        1. Emitting message_received signal
+        2. Storing message in history for export
+        3. Emitting stats_updated signal
+        4. Emitting error_occurred signal on errors
+        """
+        try:
+            # Parse message (reuse parent logic)
+            from src.douyin.parser_http import ParsedMessage as HttpParsedMessage
+            from src.douyin.connector_websocket_listener import ParsedMessage as WsParsedMessage
+            
+            if isinstance(raw_message, (HttpParsedMessage, WsParsedMessage)):
+                parsed = raw_message
+            elif isinstance(raw_message, dict):
+                # Mock连接器返回的是字典格式
+                parsed = self.parser.parse_test_message(raw_message)
+            elif isinstance(raw_message, bytes):
+                # 真实连接器返回的是二进制数据
+                if self.use_real:
+                    parsed = self.parser.parse_message(raw_message)
+                else:
+                    parsed = await self.parser.parse_message(raw_message)
+            else:
+                logger.warning(f"未知消息类型: {type(raw_message)}")
+                return
+            
+            if not parsed:
+                logger.debug("消息解析失败，跳过")
+                return
+            
+            self.stats["messages_received"] += 1
+            logger.info(f"收到消息: {parsed.method}")
+            
+            # 只处理聊天消息
+            if parsed.method != "WebChatMessage":
+                logger.debug(f"跳过非聊天消息: {parsed.method}")
+                return
+            
+            # 提取弹幕内容
+            if not parsed.content:
+                logger.debug("消息内容为空，跳过")
+                return
+            
+            user_name = parsed.user.nickname if parsed.user else "用户"
+            content = parsed.content
+            timestamp = datetime.now().isoformat()
+            
+            # ========== EMIT SIGNAL: Message Received ==========
+            self.message_received.emit(user_name, content, timestamp)
+            
+            # ========== Store in history for export ==========
+            self.message_history.append({
+                "timestamp": timestamp,
+                "user_name": user_name,
+                "content": content,
+                "method": parsed.method
+            })
+            
+            # ========== Print to console (keep CLI output for debugging) ==========
+            import sys
+            if sys.platform == 'win32':
+                print()
+                print("=" * 60)
+                print(f"[弹幕] {user_name}")
+                print(f"[内容] {content}")
+                print("=" * 60)
+                print()
+            else:
+                print()
+                print("=" * 60)
+                print(f"📺 弹幕: [{user_name}]")
+                print(f"💬 内容: {content}")
+                print("=" * 60)
+                print()
+            
+            # ========== TTS Conversion ==========
+            logger.info(f"正在转换语音: {content}")
+            
+            # TTS转换带重试机制
+            audio_path = None
+            max_retries = 2
+            
+            for attempt in range(max_retries):
+                try:
+                    audio_path = await asyncio.wait_for(
+                        self.tts.convert_with_cache(
+                            text=content,
+                            cache_dir=Path("cache")
+                        ),
+                        timeout=5.0
+                    )
+                    
+                    if audio_path:
+                        break
+                
+                except asyncio.TimeoutError:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"TTS转换超时（5秒），第{attempt + 1}次重试: {content}")
+                        await asyncio.sleep(0.5)
+                    else:
+                        error_msg = f"TTS转换超时，已重试{max_retries}次: {content}"
+                        logger.error(error_msg)
+                        self.error_occurred.emit("TTSTimeout", error_msg)
+                        return
+                except Exception as e:
+                    error_msg = f"TTS转换失败: {e}: {content}"
+                    logger.warning(error_msg)
+                    self.error_occurred.emit("TTSError", str(e))
+                    return
+            
+            if not audio_path:
+                error_msg = f"语音转换失败: {content}"
+                logger.warning(error_msg)
+                self.error_occurred.emit("TTSFailure", error_msg)
+                return
+            
+            # ========== Add to play queue ==========
+            await self.play_queue.put({
+                'audio_path': audio_path,
+                'content': content
+            })
+            
+            self.stats["messages_played"] += 1
+            logger.info(f"加入播放队列 (总计: {self.stats['messages_played']})")
+            
+            # ========== EMIT SIGNAL: Stats Updated ==========
+            self.stats_updated.emit(self.stats.copy())
+            
+        except Exception as e:
+            error_msg = f"处理消息失败: {e}"
+            logger.error(error_msg)
+            self.stats["errors"] += 1
+            self.error_occurred.emit("MessageProcessingError", str(e))
+            self.stats_updated.emit(self.stats.copy())
+    
+    async def run(self):
+        """
+        Run main loop (overrides parent method to emit connection signals)
+        
+        Returns:
+            bool: True if run completed successfully
+        """
+        try:
+            # 连接直播间
+            logger.info(f"正在连接直播间: {self.room_id}")
+            connected = await self.connector.connect()
+            
+            if not connected:
+                error_msg = "连接直播间失败"
+                logger.error(error_msg)
+                self.connection_changed.emit(False, error_msg)
+                self.error_occurred.emit("ConnectionError", error_msg)
+                return False
+            
+            self.is_running = True
+            success_msg = "连接成功！开始监听弹幕..."
+            logger.info(success_msg)
+            self.connection_changed.emit(True, success_msg)
+            
+            # 监听消息
+            await self.connector.listen(self.handle_message)
+            
+        except asyncio.CancelledError:
+            logger.info("任务被取消")
+            self.connection_changed.emit(False, "任务已取消")
+        except KeyboardInterrupt:
+            logger.info("用户中断")
+            self.connection_changed.emit(False, "用户中断")
+        except Exception as e:
+            error_msg = f"运行异常: {e}"
+            logger.error(error_msg)
+            self.connection_changed.emit(False, f"运行异常: {str(e)}")
+            self.error_occurred.emit("RuntimeError", str(e))
+        finally:
+            await self.shutdown()
+        
+        return True
+    
+    async def shutdown(self):
+        """
+        Graceful shutdown (overrides parent to emit final signals)
+        """
+        logger.info("="*60)
+        logger.info("正在关闭GUI编排器...")
+        logger.info("="*60)
+        
+        self.is_running = False
+        
+        # Stop playback queue
+        if self.play_task:
+            logger.info("等待播放队列完成...")
+            try:
+                await asyncio.wait_for(self.play_queue.join(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("播放队列未在5秒内完成，强制停止")
+            except Exception as e:
+                logger.error(f"等待播放队列完成时出错: {e}")
+            
+            self.play_task.cancel()
+            try:
+                await self.play_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Disconnect connector
+        if self.connector:
+            await self.connector.disconnect()
+        
+        # Cleanup player
+        if self.player:
+            self.player.cleanup()
+        
+        # Emit final stats
+        self.stats_updated.emit(self.stats.copy())
+        
+        # Emit connection closed signal
+        self.connection_changed.emit(False, "已断开连接")
+        
+        # Print statistics
+        logger.info("运行统计:")
+        logger.info(f"  接收消息: {self.stats['messages_received']}")
+        logger.info(f"  播报消息: {self.stats['messages_played']}")
+        logger.info(f"  错误次数: {self.stats['errors']}")
+        logger.info(f"  历史记录数: {len(self.message_history)}")
+        
+        if self.stats['messages_received'] > 0:
+            success_rate = (self.stats['messages_played'] / self.stats['messages_received']) * 100
+            logger.info(f"  成功率: {success_rate:.1f}%")
+        
+        logger.info("="*60)
+        logger.info("GUI编排器已安全退出")
+        logger.info("="*60)
+    
+    def export_to_txt(self, filepath: str) -> bool:
+        """
+        Export message history to TXT file
+        
+        Args:
+            filepath: Output file path
+        
+        Returns:
+            bool: True if export successful
+        """
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write("=" * 60 + "\n")
+                f.write("弹幕记录导出\n")
+                f.write(f"房间ID: {self.room_id}\n")
+                f.write(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"消息总数: {len(self.message_history)}\n")
+                f.write("=" * 60 + "\n\n")
+                
+                for msg in self.message_history:
+                    f.write(f"[{msg['timestamp']}] ")
+                    f.write(f"{msg['user_name']}: ")
+                    f.write(f"{msg['content']}\n")
+            
+            logger.info(f"导出TXT成功: {filepath}")
+            return True
+        
+        except Exception as e:
+            logger.error(f"导出TXT失败: {e}")
+            self.error_occurred.emit("ExportError", f"Failed to export TXT: {str(e)}")
+            return False
+    
+    def export_to_json(self, filepath: str) -> bool:
+        """
+        Export message history to JSON file
+        
+        Args:
+            filepath: Output file path
+        
+        Returns:
+            bool: True if export successful
+        """
+        try:
+            import json
+            
+            export_data = {
+                "room_id": self.room_id,
+                "export_time": datetime.now().isoformat(),
+                "total_messages": len(self.message_history),
+                "stats": self.stats,
+                "messages": self.message_history
+            }
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"导出JSON成功: {filepath}")
+            return True
+        
+        except Exception as e:
+            logger.error(f"导出JSON失败: {e}")
+            self.error_occurred.emit("ExportError", f"Failed to export JSON: {str(e)}")
+            return False
+    
+    def get_message_history(self) -> list[Dict[str, Any]]:
+        """
+        Get message history
+        
+        Returns:
+            List of message dictionaries
+        """
+        return self.message_history.copy()
+    
+    def clear_history(self):
+        """Clear message history"""
+        self.message_history.clear()
+        logger.info("消息历史已清空")

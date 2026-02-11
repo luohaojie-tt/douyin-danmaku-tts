@@ -15,3 +15,8 @@ python-dotenv==1.0.0
 
 # 日志
 colorlog==6.8.0
+
+# GUI支持 (PyQt5)
+PyQt5==5.15.10
+PyQt5-Qt5==5.15.2
+PyQt5-sip==12.13.0

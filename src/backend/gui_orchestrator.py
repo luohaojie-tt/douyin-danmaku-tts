@@ -580,7 +580,7 @@ class GUIOrchestrator(QObject):
 
                     # 在asyncio上下文中安全设置音量
                     if self._orchestrator.player:
-                        self._orchestrator.player.volume = volume
+                        self._orchestrator.player.set_volume(volume)
                         logger.info(f"音量已更新: {volume}")
 
                 except asyncio.TimeoutError:

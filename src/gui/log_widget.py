@@ -9,8 +9,8 @@ from typing import Optional
 from datetime import datetime
 
 from PyQt5.QtWidgets import QWidget, QTextEdit, QVBoxLayout
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QColor, QColorConstants, QFont
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class LogWidget(QWidget):
     """
 
     MAX_LINES = 500  # 最大行数
+    THROTTLE_MS = 50  # 节流时间（毫秒）
 
     # 日志颜色映射
     LOG_COLORS = {
@@ -39,15 +40,21 @@ class LogWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         """
         初始化日志组件
-        
+
         Args:
             parent: 父窗口
         """
         super().__init__(parent)
-        
+
+        # 节流机制
+        self._pending_logs = []
+        self._flush_timer = QTimer()
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.timeout.connect(self._flush_pending_logs)
+
         # 初始化UI
         self._init_ui()
-        
+
         logger.debug("日志组件已初始化")
 
     def _init_ui(self):
@@ -78,8 +85,35 @@ class LogWidget(QWidget):
 
     def add_log(self, level: str, message: str, source: str = ""):
         """
-        添加日志
-        
+        添加日志（带节流优化）
+
+        Args:
+            level: 日志级别 (INFO, WARNING, ERROR, DEBUG)
+            message: 日志消息
+            source: 日志来源 (可选)
+        """
+        # 添加到待处理队列
+        self._pending_logs.append((level, message, source))
+
+        # 如果定时器未运行，启动它
+        if not self._flush_timer.isActive():
+            self._flush_timer.start(self.THROTTLE_MS)
+
+    def _flush_pending_logs(self):
+        """批量处理待处理的日志"""
+        if not self._pending_logs:
+            return
+
+        # 批量处理所有待处理的日志
+        for level, message, source in self._pending_logs:
+            self._add_log_impl(level, message, source)
+
+        self._pending_logs.clear()
+
+    def _add_log_impl(self, level: str, message: str, source: str = ""):
+        """
+        实际执行日志添加操作
+
         Args:
             level: 日志级别 (INFO, WARNING, ERROR, DEBUG)
             message: 日志消息
@@ -87,33 +121,33 @@ class LogWidget(QWidget):
         """
         # 获取时间戳
         timestamp = datetime.now().strftime("%H:%M:%S")
-        
+
         # 格式化日志
         if source:
             log_text = f"[{timestamp}] [{level}] [{source}] {message}"
         else:
             log_text = f"[{timestamp}] [{level}] {message}"
-        
+
         # 获取颜色
         color = self.LOG_COLORS.get(level, QColor(220, 220, 220))
-        
+
         # 移动光标到末尾
         cursor = self.text_edit.textCursor()
         cursor.movePosition(cursor.End)
-        
+
         # 插入带颜色的文本
         char_format = cursor.charFormat()
         char_format.setForeground(color)
         cursor.setCharFormat(char_format)
         cursor.insertText(log_text + "\n")
-        
+
         # 自动滚动到底部
         self.text_edit.setTextCursor(cursor)
         self.text_edit.ensureCursorVisible()
-        
+
         # 清理旧日志
         self._prune_old_logs()
-        
+
         logger.debug(f"添加日志: {level} - {message}")
 
     def _prune_old_logs(self):

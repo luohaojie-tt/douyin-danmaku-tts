@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QCheckBox, QSlider, QGroupBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,18 @@ class ControlPanel(QWidget):
 
         # 连接状态
         self._is_connected = False
+
+        # 防抖机制：音量滑块
+        self._volume_debounce_timer = QTimer()
+        self._volume_debounce_timer.setSingleShot(True)
+        self._volume_debounce_timer.timeout.connect(self._emit_volume_change)
+        self._pending_volume = None
+
+        # 防抖机制：语速滑块
+        self._rate_debounce_timer = QTimer()
+        self._rate_debounce_timer.setSingleShot(True)
+        self._rate_debounce_timer.timeout.connect(self._emit_rate_change)
+        self._pending_rate = None
 
         # 加载GUI配置
         from src.backend.gui_config_manager import GUIConfigManager
@@ -129,7 +141,7 @@ class ControlPanel(QWidget):
         self.rate_slider.setValue(50)
         self.rate_slider.setTickPosition(QSlider.TicksBelow)
         self.rate_slider.setTickInterval(10)
-        self.rate_slider.valueChanged.connect(self._on_rate_changed)
+        self.rate_slider.valueChanged.connect(self._on_rate_slider_changed)
         tts_layout.addWidget(self.rate_slider)
 
         # 音量控制
@@ -146,7 +158,7 @@ class ControlPanel(QWidget):
         self.volume_slider.setValue(70)
         self.volume_slider.setTickPosition(QSlider.TicksBelow)
         self.volume_slider.setTickInterval(10)
-        self.volume_slider.valueChanged.connect(self._on_volume_changed)
+        self.volume_slider.valueChanged.connect(self._on_volume_slider_changed)
         tts_layout.addWidget(self.volume_slider)
 
         tts_group.setLayout(tts_layout)
@@ -225,27 +237,47 @@ class ControlPanel(QWidget):
         logger.info(f"TTS {'启用' if enabled else '禁用'}")
         self.signals.tts_enabled_changed.emit(enabled)
 
-    def _on_rate_changed(self, value: int):
+    def _on_rate_slider_changed(self, value: int):
         """
-        语速变化
+        语速滑块值改变（高频触发，防抖处理）
 
         Args:
             value: 语速值 (-50 到 +100)
         """
+        # 立即更新UI标签（用户需要即时反馈）
         self.rate_value_label.setText(f"{value:+d}%")
-        logger.debug(f"语速调整为: {value:+d}%")
-        self.signals.speech_rate_changed.emit(value)
 
-    def _on_volume_changed(self, value: int):
+        # 防抖：100ms后才发射信号
+        self._pending_rate = value
+        self._rate_debounce_timer.start(100)
+
+    def _emit_rate_change(self):
+        """防抖定时器超时后发射语速变化信号"""
+        if self._pending_rate is not None:
+            logger.debug(f"语速调整为: {self._pending_rate:+d}%")
+            self.signals.speech_rate_changed.emit(self._pending_rate)
+            self._pending_rate = None
+
+    def _on_volume_slider_changed(self, value: int):
         """
-        音量变化
+        音量滑块值改变（高频触发，防抖处理）
 
         Args:
             value: 音量值 (0-100)
         """
+        # 立即更新UI标签（用户需要即时反馈）
         self.volume_value_label.setText(str(value))
-        logger.debug(f"音量调整为: {value}")
-        self.signals.volume_changed.emit(value)
+
+        # 防抖：100ms后才发射信号
+        self._pending_volume = value
+        self._volume_debounce_timer.start(100)
+
+    def _emit_volume_change(self):
+        """防抖定时器超时后发射音量变化信号"""
+        if self._pending_volume is not None:
+            logger.debug(f"音量调整为: {self._pending_volume}")
+            self.signals.volume_changed.emit(self._pending_volume)
+            self._pending_volume = None
 
     def open_settings_dialog(self):
         """打开设置对话框"""
